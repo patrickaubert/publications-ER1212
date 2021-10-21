@@ -1,0 +1,2586 @@
+﻿---
+title: "Prévalences et EV dans l'APA en France (analyse détaillée)"
+author: "Patrick Aubert"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::html_document:
+    theme: flatly
+    number_sections: true
+    toc: true
+    toc_float: true
+  rmarkdown::word_document:
+    default
+---
+
+```{r info, include=FALSE}
+
+# Copyright (C) 2021. Logiciel élaboré par l'État, via la Drees.
+# Nom de l'auteur : Patrick Aubert, Drees.
+# Ce programme informatique a été développé par la Drees. Il permet de produire les tableaux de l'ER n°1212 sur l'espérance de vie dans l'APA, ainsi qu'un certain nombre d'analyses complémentaires.
+# Ce programme a été exécuté le 07/10/2021 avec la version 4.0.5 de R (voir ci-dessous les informations sur la session).
+# Ce programme utilise les données agrégées publiées par la DREES à partir de son enquête annuelle sur l'aide sociale des départements.
+# Bien qu'il n'existe aucune obligation légale à ce sujet, les utilisateurs de ce programme sont invités à signaler à la DREES leurs travaux issus de la réutilisation de ce code, ainsi que les éventuels problèmes ou anomalies qu'ils y rencontreraient, en écrivant à DREES-CODE@sante.gouv.fr
+
+
+# Ce logiciel est régi par la licence "GNU General Public License" GPL-3.0. # https://spdx.org/licenses/GPL-3.0.html#licenseText
+# À cet égard l'attention de l'utilisateur est attirée sur les risques associés au chargement, à l'utilisation, à la modification et/ou au développement et à la reproduction du logiciel par l'utilisateur étant donné sa spécificité de logiciel libre, qui peut le rendre complexe à manipuler et qui le réserve donc à des développeurs et des professionnels avertis possédant des connaissances informatiques approfondies. Les utilisateurs sont donc invités à charger et tester l'adéquation du logiciel à leurs besoins dans des conditions permettant d'assurer la sécurité de leurs systèmes et ou de leurs données et, plus généralement, à l'utiliser et l'exploiter dans les mêmes conditions de sécurité.
+# Le fait que vous puissiez accéder à cet en-tête signifie que vous avez pris connaissance de la licence GPL-3.0, et que vous en avez accepté les termes.
+
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along with this program.If not, see <https://www.gnu.org/licenses/>.
+
+# =======
+#
+# > sessionInfo()
+#
+#R version 4.0.5 (2021-03-31)
+#Platform: x86_64-w64-mingw32/x64 (64-bit)
+#Running under: Windows 10 x64 (build 17134)
+  
+```
+
+    
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+  results='asis', 
+  echo=FALSE, 
+  message=FALSE, 
+  warning=FALSE,
+  fig.width = 6,
+  out.width = "100%",
+  out.height = "100%"
+)
+
+options(Encoding="UTF-8",
+        scipen=999)
+
+library(readxl)
+library(openxlsx)
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(kableExtra)
+
+# remotes::install_github("spyrales/gouvdown")
+#library(gouvdown)
+
+# remotes::install_github("patrickaubert/asdep",ref='main')
+library(asdep)
+# remotes::install_github("patrickaubert/healthexpectancies",ref='main')
+library(healthexpectancies)
+
+# fonctions pour les graphiques
+
+graphloc <- function(...) ggplotAsdep(...)
+graphlocly <- function(...) ggplotlyAsdep(...)
+
+source("R/fonctions mise en forme DREES.R")
+graphlocER <- function(...) ggplot_style_ER(...) 
+
+source("R/exporter_tableau_punaise.R")
+# RQ : fonction extraite du package rdrees (qui ne semble pas fonctionner avec la version 4.0.0 de R ?)
+
+source("R/fonctions auxiliaires pour étude EVAPA.R")
+
+# codes des tranches d'âge
+
+trancheage <- list(
+  "de 60 à 64 ans" = "[60,65)", 
+  "Moins de 65 ans" = "[60,65)", 
+  "moins de 65 ans" = "[60,65)", 
+  "de 60 à 65 ans" = "[60,65)", 
+  "de 65 à 69 ans" = "[65,70)", 
+  "de 70 à 74 ans" = "[70,75)", 
+  "de 75 à 79 ans" = "[75,80)", 
+  "de 80 à 84 ans" = "[80,85)", 
+  "85 ans ou plus" = "[85,Inf]", 
+  "85 ans et plus" = "[85,Inf]", 
+  "de 85 à 89 ans" = "[85,90)", 
+  "de 90 à 94 ans" = "[90,95)", 
+  "90 ans et plus" = "[90,Inf]",
+  "90 ans ou plus" = "[90,Inf]",
+  "95 ans et plus" = "[95,Inf]", 
+  "95 ans ou plus" = "[95,Inf]"
+)
+
+
+
+
+```
+
+# Introduction
+
+Ce document décrit la construction d'un indicateur d'espérance de vie (EV) dans l'APA, qui s'inscrit dans la famille des indicateurs d'espérance de vie avec ou sans incapacité (EVSI). La méthodologie s'appuie donc, de façon traditionnelle, sur une combinaison des quotients de mortalité à chaque âge et sur les prévalences dans l'APA par classe d'âge.
+
+La dernière partie du document correspond à un projet de publication dans la collection *études et résultats* de la DREES, présentant les principaux enseignements.
+
+## Pourquoi calculer un EV dans l'APA ?
+
+L'intérêt de l'indicateur est de permettre le suivi de l'APA en s'affranchissant de l'effet mécanique de hausse liée au vieillissement. Le suivi des effectifs de bénéficiaires payés de l'APA ne permet pas, en effet, de conclure à une amélioration ou non de l'état de dépendance des personnes âgées, dans la mesure où l'augmentation des effectifs est portée en premier lieu par la hausse de la population âgée.
+
+Un second intérêt est de pouvoir situer plus facilement les évolutions de l'APA par rapport aux scénarios habituels d'évolution des EVSI : scénarios de "compression", "d'extension" ou "d'équilibre dynamique". De façon sous-jacente, il s'agit de savoir si les gains d'espérance de vie aux grands âges se font dans l'APA (ie dans un état de dépendance) ou en dehors de l'APA.
+
+L'espérance de vie dans l'APA (EVAPA) a pour limite principale celle de tout indicateur portant sur une mesure administrative : elle dépend à la fois de l'état de dépendance des personnes âgées mais aussi des pratiques de recours (de la part des bénéficiaires potentiels) et d'attribution de la prestation (de la part des départements qui en assurent la gestion). Cette limite est structurelle, et devra être gardé en tête dans l'interprétation de l'indicateur. Ce dernier présente à l'inverse l'avantage de pouvoir être calculé annuellement, avec un recul historique important (depuis la création de la prestation), et de présenter des variations moins erratiques d'une année sur l'autre (du fait du recours à des données administratives plutôt qu'à des données d'enquête soumises au bruit lié à l'échantillonnage).
+
+## Méthodologie
+
+Les prévalences dans l'APA sont calculées à partir des effectifs et des parts par âge des bénéficiaires payés de l'APA, d'après l'enquête annuelle sur l'aide sociale des départements réalisée par la DREES. Les populations et les coefficients de mortalité sont ceux fournis par l'Insee. La ventilation par âge des bénéficiaires de l'APA n'étant disponible que par tranches d'âge, elles sont au préalable lissées pour obtenir des prévalences par âge fin. Ce lissage des prévalences, de même que le calcul des EVAPA, sont réalisées à partir du package R *healthexpectancies* (https://patrickaubert.github.io/healthexpectancies/).
+
+Les espérances de vie dans l'APA sont ensuite calculées selon la méthode de Sullivan, là encore en mobilisant le package *healthexpectancies*.
+
+## Comment actualiser ce document ?
+
+L'analyse présentée ici a été réalisée au premier semestre 2021, sur des données portant jusqu'à l'année 2019. Il sera utile de l'actualiser chaque année, l'espérance de vie dans l'APA ayant vocation à devenir un indicateur récurrent de suivi de cette prestation, par exemple dans le Panorama *Aide et action sociales* de la DREES. Cette section détaille le manière de mettre à jour le présent document, pour faciliter le travail de celles ou ceux qui entreprendront une telle actualisation.
+
+**Première étape : actualisation des fichiers sources**
+
+Un certain nombre de fichiers Excel doivent être ajoutés dans le sous-dossier */data-raw/* correspondant aux résultats des années les plus récentes :
+
+- résultats de l'enquête Aide sociale sur les ventilations par âge des bénéficiaires de l'APA : les fichiers "APA - Données détaillées par GIR, âge et sexe en 20xx.xlsx" sont diffusés sous *[data.drees]()* ;
+- les populations par âge fin sont téléchargeables sur le site de l'Insee ; on a utilisé ici le fichier "donnees_pyramide_act.csv" disponible à l'adresse https://www.insee.fr/fr/outil-interactif/5014911/pyramide.htm ;
+- le programme nécessite aussi les données actualisées sur le nombre total de bénéficiaires de l'APA ; on a utilisé ici la table intégrée au package *asdep*, issue du fichier *data.drees* sur les [bénéficiaires de l'aide sociale en séries longues]() ; l'actualisation de ce package chaque année n'étant pas garantie, il vaudra mieux adapter le programme pour s'appuyer directement sur le fichier Excel diffusé sous *data.drees ;
+- les quotients de mortalité utilisés sont ceux intégrés au package *healthexpectancies*, qui viennent à la base des données détaillées du [bilan démogaphique de l'Insee](https://www.insee.fr/fr/statistiques/5233892?sommaire=5007726) (tableau T68) ; là encore, le programme devrait être adapté pour utiliser directement les fichiers Excel diffusés par l'Insee ;
+- le programme ci-après utilise aussi les données sur les prévalences de l'APA diffusées dans le cadre du Panorama annuelle *L'aide et l'action sociales en France*, afin de vérifier l'existence d'éventuels écarts ; ces données devraient elles aussi être actualisées si on souhaitait mettre à jour les comparaisons, mais ces dernières relèvent uniquement des tests de robustesse et ne sont pas indispensables.
+
+**Deuxième étape : mise à jour de la table des prévalences par âge**
+
+A partir des fichiers sources dans le sous-dossier */data-raw/*, cette table peut être actualisée en faisant tourner le programme *Calcul des prévalences dans l'aide sociale PA.R* du sous-répertoire */R/*. La table créée correspond au fichier *prevalences par âges - aides sociales aux personnes âgées.csv* dans le sous-répertoire */data/*.
+
+Si l'on souhaite également actualiser la comparaison avec les données du Panorama *L'aide et l'action sociales en France*, il faut en outre faire tourner le programme *Prévalence dans l'APA d'après le Panorama Aide et action sociales.R*, dont le produit est lui aussi créé dans le sous-répertoire */data/*.
+
+**Troisième étape : mise à jour de l'analyse et des fichiers de diffusion**
+
+Une fois toutes les données sources actualisées, l'étape suivante consiste à faire tourner les deux programmes Rmarkdown *Prévalences et EV dans l'APA_analyse complète.Rmd*, puis *Prévalences et EV dans l'APA_projet ER.Rmd*. Ces progammes vont produire des fichiers data.drees actualisés, mais aussi les deux fichiers d'analyse ("l'analyse complète" au format HTML et l'étude et résultats au format Word). Ce n'est pas en soi indispensable, et le programme pourrait être allégé pour produire directement les seuls fichiers data.drees, mais il est utile de mettre à jour et rebalayer tous les graphiques qui ont servi à l'analyse de robustesse, afin de vérifier qu'il n'y a aucune anomalie ou résultat incompréhensible dans les données actualisées.
+
+# Prévalences par âge
+
+## Récupération des données
+
+Les données sur l'APA sont issues de l'enquête annuelle Aide sociale de la DREES. Elles sont récupérées, selon les années, sur le site internet de la DREES ou sur data.drees. En pratique on récupére d'une part les ventilations par tranches d'âge pour chaque prestation, et d'autre part les effectifs totaux par prestation.
+
+Plus précisément :
+
+* Les données de 2000 à 2014 sont tirées des documents de travail annuels "les bénéficiaires de l'aide sociale départementale". Jusqu'en 2005, seules les versions PDF sont disponibles, et les parts par tranche d'âge sont arrondies au point de pourcentage. A partir de 2006, des versions Excel sont disponibles, et les part sont récupérées non arrondies.
+* Les données à partir de 2015 pour l'APA sont récupérées dans les fichiers data.drees "APA - Données détaillées par GIR, âge et sexe en 201x"
+* Les données à partir de 2015 pour l'ASH sont récupérées dans les fichiers Excel associés au panorama annuel "L'aide et l'action sociales en France".
+
+Pour les données jusqu'en 2009, on a récupéré les valeurs manuellement et on les a copiées-collées dans un fichier csv. Pour les années ultérieures, on récupére tous les fichiers Excel pertinent et on extrait les tableaux d'intérêt dans le programme R.
+
+Une copie du fichier des prévalences par tranche d'âge est sauvegardée pour éviter d'avoir à refaire l'extraction chaque année (fichier *prevalences par âges - aides sociales aux personnes âgées.csv* dans le sous-répertoire *data*).
+
+```{r extraitdonnes,include=FALSE,echo=FALSE}
+
+# ===
+# récupération des données dans le fichier de prévalences en séries longues
+
+if (FALSE) {
+  source("R/Calcul des prévalences dans l'aide sociale PA.R")
+} else {
+  prevalences <- read_csv2("data/prevalences par âges - aides sociales aux personnes âgées.csv")
+}
+
+# ===
+# à titre de comparaison : prévalences de l'APA dans le panorama AAS
+
+if (FALSE) {
+  source("R/Prévalence dans l'APA d'après le Panorama Aide et action sociales.R")
+} else {
+  #aas <- read_csv2("data/panorama AAS - prevalences de l APA par âges.csv")
+  load("data/panorama AAS - prevalences de l APA par âges.Rda")
+}
+
+compareaas <- aas %>% filter(sexe=="Ensemble") %>%
+  left_join(prevalences %>% rename(prevalenceref=prevalence) %>%
+              select(annee,prestation,age,gir,prevalenceref) ,
+            by=c("annee","prestation","age","gir")) %>%
+  mutate(ecart = round(prevalence-prevalenceref,3))
+
+
+# ===
+# Complément : données sur les EVSI
+
+
+#evsi <- read.xlsx("https://drees.solidarites-sante.gouv.fr/sites/default/files/2020-12/er1173.xlsx", rows = c(5:11), cols = c(3:18))
+
+ev <- read.xlsx("data-raw/er1173.xlsx", rows = c(5:11), cols = c(3:18)) %>%
+  mutate(indicateur = str_extract(X1,"^.*(?= des )"),
+         sexe = str_extract(X1,"(?<= des ).*$"),
+         indicateur = recode(indicateur,
+                             "Espérance de vie sans incapacité sévère" = "EVSH",
+                             "Espérance de vie" = "EV")) %>%
+  select(-X1) %>%
+  pivot_longer(cols=-c("indicateur","sexe"),names_to="annee",values_to="ev") 
+
+ev <- bind_rows(
+  ev,
+  ev %>%
+    select(-sexe) %>%
+    group_by(indicateur,annee) %>% summarise_all(mean) %>% ungroup() %>%
+    mutate(sexe = "ensemble")
+)
+
+# ==
+# Complément 2 : projections du modèle LIVIA
+
+# on télécharge le tableau de résultats depuis l'appli R Shiny https://drees.shinyapps.io/projection-pa/, sous l'hypothèse d'EV basse
+# données téléchargées le 18/07/2021
+
+projlivia <- read.csv("data-raw/Nombre de beneficiaires de lAPA_evol_demog_edv_basse.csv") %>%
+  rename(annee = ANNEE) %>%
+  pivot_longer(cols=-c("annee"),names_to="hypothese",values_to="nb") %>%
+  mutate(hypothese = paste0("livia_",hypothese))
+
+```
+
+## Répartition par âges des principales prestations d'aide sociale aux personnes âgées
+
+Les ventilations par tranche d'âge sont disponibles par âge quinquennal jusqu'à 85 ans en 2015 ou avant, et jusqu'à 95 ans à partir de 2016. Pour l'APA, elles sont croisées avec le GIR à partir de 2010. Les ventilations par âge croisées avec le sexe ne sont pas diffusées.
+
+
+```{r graphevol,echo=FALSE}
+
+#ggplotly({graphloc(gir, aes(x=annee,y=part,fill=gir)) +
+#  geom_bar(stat = "identity", position = "fill") +
+#  facet_wrap( ~ prestation) } 
+#)
+
+# répartition par âge
+
+age <- prevalences %>%
+  filter(gir == "Ensemble",
+         recale_gir == FALSE,
+         ((annee<=2015)&(decomp6age) | (annee>=2016)&(decomp8age)))
+
+{graphloc(age, aes(x=annee,y=part,fill=age)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap( ~ prestation) +
+  labs(title = "Ventilation par âge des prestations d'aide sociale")
+  } %>%
+ ggplotly() 
+
+# répartition par GIR et âge pour l'APA
+
+girage <- prevalences %>%
+  filter(gir != "Ensemble",
+         ((annee<=2015)&(decomp6age) | (annee>=2016)&(decomp8age))) %>%
+  mutate(partGir = part) 
+
+ggplotly(
+graphloc(girage, aes(x=annee,y=partGir,fill=age)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_grid(gir ~ prestation)+
+  labs(title = "Ventilation par âge des bénéficiaires payés de l'APA, selon le GIR")
+)
+
+```
+
+Les graphiques ci-avant représentent les ventilations par âge telles que diffusées par la DREES. Cependant, pour l'APA, ces ventilations ne sont pas totalement cohérentes selon qu'elles sont calculées par GIR ou tous GIR confondus. Cela s'explique par la non-réponse partielle ou par les modalités "âge inconnu", qui peuvent être distinctes dans les tableaux par GIR ou tous GIR confondus.
+
+Le graphique ci-après compare la distribution par âge des bénéficiaires de l'APA diffusée avec celle recalculée en agrégeant les distributions par âge pour chaque GIR (et la part des GIR dans l'ensemble).
+
+
+```{r graphevol_compare_calegir,echo=FALSE}
+
+# répartition par âge
+
+compare_recale_gir <- prevalences %>%
+  filter(gir == "Ensemble",
+         grepl("^APA",prestation),
+         annee>=2010,
+         ((annee<=2015)&(decomp6age) | (annee>=2016)&(decomp8age))) %>%
+  mutate(methode = ifelse(recale_gir,"somme par GIR","diffusé") %>% as.factor(),
+         part=round(part,4)) %>%
+  select(annee,age,methode,prestation,part)
+
+{graphloc(compare_recale_gir, aes(x=annee,y=part,fill=age)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_grid(methode ~ prestation) +
+  labs(title = "Ventilation par âge de l'APA")
+  } %>%
+ ggplotly() 
+
+```
+
+## Evolutions des prévalences selon l'âge et l'année
+
+Pour calculer des prévalences, on multiplie d'abord les parts par tranche d'âge par les effectifs totaux de chaque prestation, puis on les divise par la population totale par tranche d'âge en France entière (source : Insee). Les données démographiques de l'Insee sont téléchargées depuis la page web présentant les pyramides des âges interactives (https://www.insee.fr/fr/outil-interactif/5014911/pyramide.htm).
+
+A noter que la population totale fournie par l'Insee inclut Mayotte à partir de 2014. Les données sur l'aide sociale départementale sont sur le champ de la France hors Mayotte. On néglige cette différence de champ.
+
+On présente d'abord dans le graphique ci-après les prévalences pour les autres prestations que l'APA. Les résultats concernant l'APA sont détaillés dans les sous-sections suivantes.
+
+```{r graphpreval_selonage,echo=FALSE}
+
+# prevalences non lissées
+
+ ## prevalence en fonction de l'âge
+ggplotly(
+graphloc(prevalences %>% filter(!(prestation %in% c("APA","APAdom","APAetab"))), 
+         aes(x=annee,y=prevalence,colour=age,group=age)) +
+  geom_line() +
+  facet_wrap( ~ prestation) +
+  labs(title = "Prévalence des prestations autres que l'APA selon l'âge, pour diverses années")
+)
+
+```
+
+## Pour l'APA : comparaison avec les prévalences diffusées dans le panorama *Aide et action sociales*
+
+Depuis quelques années, des prévalences de l'APA par tranche d'âge sont diffusées dans le panorama de la DREES *L'aide et l'action sociales en France*. cette publication est en particulier le seul endroit où des prévalences par sexe et âge sont diffusées (les données data.drees utilisées ici ne croisent pas, en revanche, ces deux dimensions).
+
+On vérifie ici la cohérence entre les deux sources. Des écarts peuvent exister car le Panorama s'appuie sur les données de population de l'Insee disponibles au moment de la rédaction de la fiche. Il peut s'agir de données provisoires qui sont révisées (parfois sensiblement) par ailleurs, notamment dans les tranches d'âges les plus élevées. A noter que dans le Panorama publié en 2020 (relatif aux données fin 2018), les tranches d'âges de 90 ans et plus sont regroupées ; on peut toutefois retrouver le détail des 90-94 ans et 95 ans et plus (pour l'ensemble de l'APA et les deux sexes regroupés uniquement) dans le tableau 2 de la fiche 12.
+
+Dans les graphiques ci-après, les prévalences récupérées dans les fichiers data.drees (et les documents de travail auparavant) sont présentées sous deux formes : celles directement diffusées pour l'APA tous GIR confondus, et celles recalculées par somme de l'APA par GIR.
+
+```{r comparaas,echo=FALSE}
+
+# création d'une table avec les données Panorama AAS et data.drees/DT bénéficiaires de l'aide sociale
+
+compareaas <- bind_rows(
+  bind_rows(
+    aas %>% filter(age != "[90,Inf]"),
+    aas %>% filter(age == "[90,Inf]") %>% mutate(age = "[90,95)"),
+    aas %>% filter(age == "[90,Inf]") %>% mutate(age = "[95,Inf]")
+    ) %>%
+    # correction à la main (données du tableau 2 de la fiche 12 du panorama AAS - édition 2020)
+    mutate(
+      prevalence = ifelse(
+        (annee == 2018) & (age == "[90,95)") & (prestation == "APA"),
+        0.452,
+        prevalence),
+      prevalence = ifelse(
+        (annee == 2018) & (age == "[95,Inf]") & (prestation == "APA"),
+        0.676,
+        prevalence)
+    ) %>%
+    filter(sexe == "Ensemble") %>%
+    mutate(source = "Panorama AAS"),
+  prevalences %>%
+    filter(recale_gir == FALSE) %>%
+    select(c(intersect(names(prevalences),names(aas)))) %>%
+    filter(prestation %in% unique(aas$prestation),
+           annee %in%  unique(aas$annee),
+           gir == "Ensemble",
+           age != "[85,Inf]") %>%
+    mutate(source = "data.drees et DT, diffusé"),
+  prevalences %>%
+    filter(recale_gir == TRUE) %>%
+    select(c(intersect(names(prevalences),names(aas)))) %>%
+    filter(prestation %in% unique(aas$prestation),
+           annee %in%  unique(aas$annee),
+           gir == "Ensemble",
+           age != "[85,Inf]") %>%
+    mutate(source = "data.drees et DT, somme des GIR")
+  ) %>%
+  select(annee,age,prevalence,source,prestation)
+
+ecartaas <- compareaas %>%
+  filter(grepl("^data.drees et DT",source)) %>%
+  left_join(compareaas %>%
+              filter(source  == "Panorama AAS") %>%
+              rename(prevalencepano = prevalence)  %>%
+              select(-source) ,
+            by = c("age", "annee" , "prestation") ) %>%
+  mutate(ecart = round(100*(prevalence-prevalencepano),1),
+         ecart.relatif.pct = round(100*(prevalence/prevalencepano-1),1)) %>%
+  filter(!((annee==2018) & (prestation != "APA") & (age %in% c("[85,90)" , "[90,95)" , "[95,Inf]"))))
+          
+
+# graphique comparant les prévalences, par prestation et année
+
+ ## prevalences en fonction de l'âge, selon la source
+ggplotly(
+graphloc(compareaas, 
+         aes(x=age,y=prevalence,colour=source, group=source)) +
+  geom_line() +
+  facet_grid(annee ~ prestation, scales="free") +
+  labs(title = "Prévalence de l'APA selon l'âge, Panorama AAS vs. data.drees et DT")
+)
+
+ ## écart de prevalences en fonction de l'âge entre les deux sources (en points de %)
+ggplotly(
+graphloc(ecartaas %>% mutate(annee = as.factor(annee)), 
+         aes(x=age,y=ecart, colour = annee, group=annee)) +
+  geom_line() +
+  facet_grid(source ~ prestation, scales="free") +
+  labs(title = "Ecart de prévalence de l'APA selon l'âge : data.drees et DT - Panorama AAS (en points de %)")
+)
+
+
+ ## écart de prevalences en fonction de l'âge entre les deux sources (en %)
+ggplotly(
+graphloc(ecartaas %>% mutate(annee = as.factor(annee)), 
+         aes(x=age,y=ecart.relatif.pct, colour = annee, group=annee)) +
+  geom_line() +
+  facet_grid(source ~ prestation, scales="free") +
+  labs(title = "Ecart de prévalence de l'APA selon l'âge : data.drees et DT - Panorama AAS (en %)")
+)
+
+```
+
+
+## Evolutions des prévalences de l'APA au cours du temps, par tranche d'âge  {.tabset .tabset-pills}
+
+Dans tout ce qui suit, on retient dorénavant les prévalences de l'APA (tous GIR confondus) calculés comme somme des prévalences de l'APA par GIR. Cela permet d'assurer une cohérence entre les différents résultats présentés.
+
+Le détail par GIR et âge n'est en fait disponible que depuis 2010. Pour les années 2009 et antérieures, on conserve donc les données par âge directement diffusées pour l'ensemble tous GIR confondus.
+
+```{r choix_recale_gr,echo=FALSE}
+
+prevalences <- prevalences %>%
+  filter(!(grepl("^APA",prestation) & (gir=="Ensemble") & (recale_gir==FALSE) & (annee>=2010))) %>%
+  select(-recale_gir) %>%
+  mutate(sexe = "Ensemble")
+
+```
+
+### Toutes tranches âges {.unnumbered}
+
+```{r graphpreval_selonan_ts,echo=FALSE}
+
+ ## prevalence en fonction de l'année
+ggplotly(
+graphloc(prevalences %>% 
+           filter(prestation %in% c("APA","APAdom","APAetab"),gir=="Ensemble"), 
+         aes(x=annee,y=prevalence,colour=age)) +
+  geom_line() +
+  facet_wrap( ~ prestation) +
+  labs(title = "Prévalence de l'APA selon l'année, pour diverses tranches d'âge")
+)
+```
+
+### Avant 85 ans {.unnumbered}
+
+```{r graphpreval_selonan_avt85,echo=FALSE}
+
+ ## focus sur les tranches d'âges les plus basses
+ggplotly(
+graphloc(prevalences %>% 
+           filter(prestation %in% c("APA","APAdom","APAetab"), 
+                  gir=="Ensemble",
+                  age %in% c("[60,65)","[65,70)","[70,75)","[75,80)")), 
+         aes(x=annee,y=prevalence,colour=age)) +
+  geom_line() +
+  facet_wrap( ~ prestation)+
+  labs(title = "Prévalence de l'APA selon l'année, pour diverses tranches d'âge avant 85 ans"),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### Base 100 = 2010 {.unnumbered}
+
+```{r graphpreval_selonan_base100,echo=FALSE}
+
+prevalagebase100 <- prevalences %>% 
+  filter(prestation %in% c("APA","APAdom","APAetab"), 
+         annee>=2010,
+         age %in% c("[60,65)","[65,70)","[70,75)","[75,80)","[80,85)","[85,Inf]")) %>%
+  select(prestation,gir,age,annee,prevalence)
+prevalagebase100 <- prevalagebase100 %>%
+  left_join(prevalagebase100 %>%
+              filter(annee == 2010) %>%
+              select(-annee) %>%
+              rename(prevalref = prevalence),
+            by = c("prestation","gir","age")) %>%
+  mutate(prevalence = round(100*(prevalence/prevalref),1))
+
+ ## focus sur les tranches d'âges les plus basses
+ggplotly(
+graphloc(prevalagebase100 %>% filter(gir=="Ensemble"), 
+         aes(x=annee,y=prevalence,colour=age)) +
+  geom_line() +
+  facet_wrap( ~ prestation)+
+  labs(title = "Prévalence de l'APA selon l'année, pour diverses tranches d'âge (base 100 = 2010)") ,
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+## {-}
+
+```{r graphpreval_gir,echo=FALSE}
+
+ ## prevalence en fonction de l'année pour l'APA, par GIR
+ggplotly(
+graphloc(prevalences %>% 
+           filter(prestation %in% c("APA","APAdom","APAetab"), 
+                  gir!="Ensemble"), 
+         aes(x=annee,y=prevalence,colour=age)) +
+  geom_line() +
+  facet_grid(gir ~ prestation, scales="free") +
+  labs(title = "Prévalence de l'APA selon l'année, pour diverses tranches d'âge, par GIR")
+)
+
+```
+
+## Lissage des prévalences par âge fin {.tabset .tabset-pills}
+
+Les prévalences par âge ne pouvant être calculées que par tranches d'âge à partir des données collectées dans l'enquête Aide sociale de la DREES, on utilise la fonction de lissage du package R *healthexpectancies* pour obtenir des prévalences par âge fin. Cette fonction minimise la sommes des carrés des différences secondes de la prévalence selon l'âge, sous contrainte que les moyennes par tranches d'âge (pondérées par la population à chaque âge fin) soient bien égales aux valeurs observées.
+
+Les graphiques suivant présentent les prévalences par âge fin issues du lissage. Pour les années antérieures à 2016, on ne dispose que de la moyenne pour les 85 ans et plus, alors qu'à partir de 2016, les données sont ventilées par âge quinquennal jusqu'à 95 ans. 
+
+
+```{r graphprevallisse,echo=FALSE,fig.height=40}
+
+# population par âge fin
+
+popnew <- read_csv2("data-raw/donnees_pyramide_act.csv") 
+names(popnew) <- tolower(names(popnew))
+
+pop <- popnew %>%
+  rename(agefin = age) %>%
+  mutate(annee = annee-1) %>% #pour passer de la population au 01/01/N à celle au 31/12/N-1
+  filter(agefin>=60,annee>=2000)
+
+pop <- bind_rows(
+  pop %>%
+    mutate(sexe = recode(sexe,
+                         "M" = "Hommes",
+                         "F" = "Femmes")),
+  pop %>% 
+    select(-sexe) %>%
+    group_by(annee,agefin) %>% summarise_all(sum) %>% ungroup() %>%
+    mutate(sexe = "Ensemble")
+)
+
+
+# lissage des prévalences
+
+prevalall <- bind_rows(
+  prevalences %>% filter(decomp6age == TRUE) %>% mutate(nbclasses = "6 classes d'âge"),
+  prevalences %>% filter(decomp8age == TRUE) %>% mutate(nbclasses = "8 classes d'âge"),
+  aas %>% mutate(nbclasses = "pano AAS")
+  ) %>%
+  select(-decomp6age,-decomp8age)
+
+cas <- prevalall %>% 
+  select(prestation,gir,lieu,sexe,nbclasses,annee) %>% 
+  distinct(prestation,gir,lieu,sexe,nbclasses,annee)
+
+agesfin <- c(60:max(pop$agefin))
+
+prevalisse <- function(i,cas,preval){
+  prevalloc <- preval[(preval$prestation == cas[i,]$prestation) & 
+                            (preval$gir == cas[i,]$gir) & 
+                            (preval$lieu == cas[i,]$lieu) & 
+                            (preval$nbclasses == cas[i,]$nbclasses) &
+                            (preval$annee == cas[i,]$annee) &
+                            (preval$sexe == cas[i,]$sexe),]
+  data.frame(
+    age = agesfin,
+    prestation = rep(cas[i,]$prestation,NROW(agesfin)),
+    gir = rep(cas[i,]$gir,NROW(agesfin)),
+    lieu = rep(cas[i,]$lieu,NROW(agesfin)),
+    sexe = rep(cas[i,]$sexe,NROW(agesfin)),
+    nbclasses = rep(cas[i,]$nbclasses,NROW(agesfin)),
+    annee = rep(cas[i,]$annee,NROW(agesfin)),
+    prevalenceapprox = prevalenceApprox(
+      prevalence = prevalloc$prevalence,
+      agecuts = seq(60, 
+                    case_when(cas[i,]$nbclasses == "6 classes d'âge" ~ 85,
+                              (cas[i,]$nbclasses == "pano AAS") & (cas[i,]$annee == 2018) ~ 90,
+                              TRUE ~ 95),
+                    5),
+      agemin = 60,
+      agemax = max(pop$agefin),
+      weight = pop[(pop$annee == cas[i,]$annee) & (pop$sexe == cas[i,]$sexe),]$pop
+    ),
+    stringsAsFactors = FALSE
+  )
+}
+
+prevalApprox <- do.call("rbind", 
+                        lapply(1:nrow(cas),
+                               function(i){prevalisse(i,cas=cas,preval=prevalall)}) )
+
+prevalApprox <- prevalApprox %>%
+  mutate(trAgeavt = cut(age, breaks=c(seq(60, 85 ,5),Inf),
+                        include.lowest = TRUE, right = FALSE ),
+         trAgeapr = cut(age, breaks=c(seq(60, 95 ,5),Inf),
+                        include.lowest = TRUE, right = FALSE ),
+         trAgeaas2018 = cut(age, breaks=c(seq(60, 90 ,5),Inf),
+                        include.lowest = TRUE, right = FALSE ),
+         trAge = case_when(nbclasses == "6 classes d'âge" ~ as.character(trAgeavt),
+                           (nbclasses == "pano AAS") & (annee == 2018) ~ as.character(trAgeaas2018),
+                           TRUE ~ as.character(trAgeapr)) ) %>%
+  select(age,trAge,prestation,gir,lieu,sexe,nbclasses,annee, prevalenceapprox) %>%
+  left_join(prevalall %>% 
+              select(prestation,gir,lieu,sexe,annee,age,nbclasses,prevalence) %>% 
+              rename(trAge = age),
+            by = c("prestation","gir","lieu","sexe","annee","nbclasses","trAge"))
+
+# mise en forme d'un fichier "en long" avec les prévalences lissées et non lissées
+
+prevalApproxlong <- bind_rows(
+  prevalApprox %>% select(-prevalenceapprox),
+  prevalApprox %>% select(-prevalence) %>%
+    rename(prevalence = prevalenceapprox) %>%
+    mutate(nbclasses = paste0(nbclasses," + lissage"))
+  ) %>%
+  filter(!is.na(prevalence))
+
+# prevalences non lissées vs. lissées
+
+ggplotly(
+graphloc(prevalApproxlong %>% 
+           filter(prestation %in% c("APA","APAdom","APAetab"),gir=="Ensemble",sexe=="Ensemble"), 
+         aes(x=age,y=prevalence,colour=nbclasses)) +
+  geom_line() +
+  facet_grid(annee ~ prestation) +
+  labs(title = "Prévalence de l'APA selon l'âge, avec diverses méthodes de lissage")
+)
+
+```
+
+Pour une meilleure lisibilité, on présente aussi le graphique pour une seule année, de 2016 à 2019. 
+
+### 2016 {.unnumbered}
+
+```{r graphprevallisse2_2016,echo=FALSE}
+
+logit <- function(x){ifelse(((x>0) & (x<1)),log(x/(1-x)),NA)}
+
+g_an <- function(an,logitp=FALSE){
+  tabloc <- prevalApproxlong %>% 
+    filter(prestation %in% c("APA","APAdom","APAetab"), 
+                  gir=="Ensemble",
+                  sexe=="Ensemble",
+                  #annee == max(prevalApproxlong$annee),
+                  annee == an)
+  if (logitp) {tabloc <- tabloc %>% mutate(prevalence = logit(prevalence))}
+  graphloc(tabloc, 
+         aes(x=age,y=prevalence,colour=as.factor(nbclasses),group=nbclasses)) +
+  geom_line() +
+  facet_grid( ~ prestation)  +
+  labs(title = paste("Prévalence de l'APA en",an,"selon l'âge, avec diverses méthodes de lissage"),
+       y = ifelse(logitp,"logit(prevalence)","prevalence"))
+}
+
+ggplotly(
+  g_an(2016)
+)
+```
+
+### 2017 {.unnumbered}
+
+```{r graphprevallisse2_2017,echo=FALSE}
+ggplotly(
+  g_an(2017),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2018 {.unnumbered}
+
+```{r graphprevallisse2_2018,echo=FALSE}
+ggplotly(
+  g_an(2018),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2019 {.unnumbered}
+
+```{r graphprevallisse2_2019,echo=FALSE}
+ggplotly(
+  g_an(2019),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2016 (logit) {.unnumbered}
+
+```{r graphprevallisse2_2016_logit,echo=FALSE}
+ggplotly(
+  g_an(2016,logitp=TRUE),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2017 (logit) {.unnumbered}
+
+```{r graphprevallisse2_2017_logit,echo=FALSE}
+ggplotly(
+  g_an(2017,logitp=TRUE),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2018 (logit) {.unnumbered}
+
+```{r graphprevallisse2_2018_logit,echo=FALSE}
+ggplotly(
+  g_an(2018,logitp=TRUE),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+### 2019 (logit) {.unnumbered}
+
+```{r graphprevallisse2_2019_logit,echo=FALSE}
+ggplotly(
+  g_an(2019,logitp=TRUE),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina)
+)
+```
+
+
+## Evolution par année des prévalences par âge fin
+
+```{r graphprevallisse3,echo=FALSE}
+
+
+ggplotly(
+graphloc(prevalApprox %>% 
+           filter(prestation %in% c("APA","APAdom","APAetab"), 
+                  gir=="Ensemble", 
+                  sexe=="Ensemble",
+                  age %in% c(85:100)) , 
+         aes(x=annee,y=prevalenceapprox,colour=as.factor(age),group=age)) +
+  geom_line() +
+  facet_grid(nbclasses ~ prestation)  +
+  labs(title = "Prévalence de l'APA à divers âges fin à partir de 85 ans, avec diverses méthodes de lissage")
+)
+
+# augmentation des prévalences des âges A-1 aux âges A entre l'année N-1 et l'année N (pour l'APA)
+
+#ggplotly(
+#graphloc(prevalApproxlong %>% 
+#           filter(prestation %in% c("APA"), nbclasses=="6 classes d'âge + lissage",annee>=2011) %>%
+#           select(annee,age,prevalence) %>%
+#           left_join(
+#             prevalApproxlong %>% 
+#               filter(prestation %in% c("APA"), 
+#                      nbclasses=="6 classes d'âge + lissage",annee>=2010) %>%
+#               select(annee,age,prevalence) %>%
+#               rename(lagprev=prevalence) %>%
+#               mutate(annee= annee+1),
+#             by = c("annee","age")           
+#             ) %>%
+#           mutate(d_prev = prevalence - lagprev), 
+#         aes(x=age,y=d_prev,colour=as.factor(annee),group=annee)) +
+#  geom_line() +
+#  labs(title = "Augmentation des prévalences de l'APA (lissées) entre l'age A-1 en N-1 et l'âge A en #N")
+#)
+
+
+```
+
+# Espérances de vie dans l'APA (EVAPA)
+
+## Récupération des coefficients de mortalité
+
+```{r recupqmort,echo=FALSE}
+
+# == quotients de mortalité d'après les tableaux T68 de l'Insee (moyenne sur 3 années consécutives)
+
+  # on récupère les quotients de mortalité observés par l'Insee à partir du package healthexpectancies
+
+qmortread <- healthexpectancies::FRInseeMortalityrates %>%
+      filter(geo=="france") %>%
+      select(year,age,qx,sex)
+
+  # on calcule une projection de la mortalité pour les années manquantes par simple prolongation de tendance
+
+if (max(qmortread$year)<max(prevalApprox$annee)) {
+  
+  cyearproj <- c((max(qmortread$year)+1):max(prevalApprox$annee))
+  
+  qmortimput <- qmortread %>%
+    filter(year %in% c((max(qmortread$year)-4):max(qmortread$year))) %>%
+    mutate(qx=log(qx)) %>%
+    group_by(sex,age) %>% summarise_all(mean) %>% ungroup() %>%
+    left_join(qmortread %>%
+                filter(year %in% c((max(qmortread$year)-5):(max(qmortread$year)-1))) %>%
+                mutate(lqx=log(qx)) %>% select(-qx,-year) %>%
+                group_by(sex,age) %>% summarise_all(mean) %>% ungroup(),
+              by = c("age","sex") )
+  
+  qmortproj <- data.frame(
+    age = rep(unique(qmortimput$age),times=NROW(cyearproj)),
+    year = rep(cyearproj,each=NROW(unique(qmortimput$age))),
+    stringsAsFactors = FALSE
+    ) 
+  csex <- unique(qmortread$sex)
+  qmortproj <- data.frame(
+    age = rep(qmortproj$age,times=NROW(csex)),
+    year = rep(qmortproj$year,times=NROW(csex)),
+    sex = rep(csex,each=nrow(qmortproj))
+    ) %>%
+    left_join(qmortimput %>% rename(yearref=year),
+              by = c("age","sex") ) %>%
+    mutate(qx=qx+(year-yearref)*(qx-lqx),
+           qx=exp(qx)) %>%
+    select(year,age,qx,sex)
+  
+  qmort_t68 <- bind_rows( qmortread, qmortproj)
+  
+}
+
+# == quotient de mortalité d'après les tableaux T69 de l'Insee (table de mortalité abrégée)
+
+# données téléchargées le 17/07/2021 à l'adresse https://www.insee.fr/fr/statistiques/5233892?sommaire=5007726
+# (Bilan démographique 2020 - Chiffres détaillés - Paru le : 29/03/2021 )
+
+qmort_t69 <- bind_rows(
+  read.xlsx(
+    xlsxFile = "data-raw/fe_dod_quotients_mortalite.xlsx",
+    sheet =  "qmortf",
+    startRow = 5,
+    colNames = TRUE, skipEmptyRows = TRUE, skipEmptyCols = TRUE) %>%
+    filter(grepl("^[[:digit:]]{4}",Année)) %>%
+    pivot_longer(cols=-"Année",names_to="age",values_to="qx") %>%
+    mutate(sex = "female"),
+  read.xlsx(
+    xlsxFile = "data-raw/fe_dod_quotients_mortalite.xlsx",
+    sheet =  "qmorth",
+    startRow = 5,
+    colNames = TRUE, skipEmptyRows = TRUE, skipEmptyCols = TRUE) %>%
+    filter(grepl("^[[:digit:]]{4}",Année)) %>%
+    pivot_longer(cols=-"Année",names_to="age",values_to="qx") %>%
+    mutate(sex = "male")
+) %>%
+  rename(year=Année) %>%
+  mutate(age = str_extract(age,"^[[:digit:]]+") %>% as.numeric(),
+         year= as.numeric(year),
+         qx = qx/100000)
+
+  # correction pour tenir compte du fait qu'il s'agit de l'âge atteint en fin d'année => on considère que les décès à l'âge A au 31/12 se répartissent pour moitié entre les âges A-1 et 1 en année révolue
+
+qmort_t69 <- bind_rows(
+  qmort_t69 %>% mutate(qx=qx/2,age=pmax(0,age-1)),
+  qmort_t69 %>% mutate(qx=qx/2)
+  ) %>%
+  group_by(year,sex,age) %>% summarise_all(sum) %>% ungroup()
+
+  # ajout des quotients de mortalité pour l'ensemble des sexes, en faisant l'hypothèse d'un partage 50/50 d'hommes et de femmes à la naissances
+
+qmort_t69_all <- qmort_t69 %>%
+  mutate(qx=1-qx) %>%
+  arrange(year,sex,age) %>% group_by(year,sex) %>% mutate(qx=cumprod(qx)) %>% ungroup() %>%
+  select(-sex) %>% group_by(year,age) %>% summarise_all(mean) %>% ungroup() 
+
+qmort_t69_all <- qmort_t69_all %>%
+  left_join(qmort_t69_all %>% mutate(age=age+1) %>% rename(lqx=qx), by=c("year","age")) %>%
+  mutate(qx = ifelse(age==0,1-qx,1-qx/lqx),
+         sex = "all") %>%
+  select(-lqx)
+
+qmort_t69 <- bind_rows( qmort_t69 , qmort_t69_all)
+
+
+```
+
+Les coefficients de mortalité utilisés sont ceux de la base *FRInseeMortalityrates*, elle aussi présente dans le package *healthexpectancies*. Il s'agit des données diffusées dans le tableau 68 (T68) des séries longues sur la démographie, publié par l'Insee en juin 2021 Il s'agit de moyennes lissées sur 3 années consécutives (par exemple, les coefficients de mortalité 2017 correspond à la moyenne des années 2016 à 2018). Ces données observées ne sont disponibles que jusqu'en `r max(qmortread$year)`; pour calculer les EV dans l'APA jusqu'en `r max(prevalApprox$annee)`, on extrapole les évolutions des coefficients de mortalité à chaque âge par prolongation de tendance (sur la base de l'évolution moyenne du log coefficient de mortalité des 5 dernières années). 
+
+En guise de test de robustesse, on récupère aussi les quotients de la table de mortalité abrégée (T69), diffusée elle aussi par l'Insee dans le cadre du bilan démographique. Cette table contient une année de plus que la T68. Dans la version utilisée ici, les quotients sont disponibles jusqu'à l'année `r max(qmort_t69$year)`.
+
+## Calcul des espérances de vie
+
+Le calcul des espérances de vie dans l'APA est réalisé à partir de la fonction *CompleteDFLEtable* du package *healthexpectancies*, qui implémente la méthode de Sullivan (https://patrickaubert.github.io/healthexpectancies/reference/CompleteDFLEtable.html).
+
+Les variables représentées sur les graphiques sont l'espérance de vie dans l'APA à 60 ans (variable *DLEx*) et la part de cette EV dans l'espérance de vie totale à 60 ans (*pctDLE*). **[DLEx = disability life-expectancy at age x]**
+
+## Résultats généraux sur l'ensemble des prestations {.tabset .tabset-fade .tabset-pills}
+
+```{r calcevapa,echo=FALSE}
+
+# == on retient les données du tableau T68 de l'Insee
+
+qmort <- qmort_t68
+
+  # ajout des quotients de mortalité, puis calcul des EVSI
+
+#tabqmort <- prevalApproxlong %>%
+#  mutate(categ = paste(prestation,nbclasses,gir,lieu,sep="#")) %>%
+#  select(annee,age,categ,sexe,prevalence) %>%
+#  rename(year = annee,
+#         pix = prevalence) %>%
+#  left_join(
+#    qmort %>% mutate(
+#      sexe = recode(sex,
+#                      "female" = "Femmes",
+#                      "male" = "Hommes",
+#                      "all" = "Ensemble") %>% as.character()
+#    ),
+#    by = c("year","age","sexe")
+#  ) %>%
+#  filter(!is.na(qx),!is.na(pix)) %>%
+#  mutate(categ = paste(categ,sexe,sep="#")) %>%
+#  select(-sexe)
+#
+tabqmort <- prevalApproxlong %>%
+  mutate(categ = paste(prestation,nbclasses,gir,lieu,sep="#"),
+         sex = recode(sexe,
+                      "Femmes" = "female",
+                      "Hommes" = "male",
+                      "Ensemble" = "all") %>% as.factor()) %>%
+  select(annee,age,categ,sex,prevalence) %>%
+  rename(year = annee,
+         pix = prevalence) %>%
+  left_join(
+    qmort ,
+    by = c("year","age","sex")
+  ) %>%
+  filter(!is.na(qx),!is.na(pix)) 
+
+evapa <- CompleteDFLEtable(tabqmort) %>%
+  mutate(prestation = str_extract(categ,"^[^#]+"),
+         nbclasses = str_extract(categ,"[^#]+(?=#[^#]+#[^#]+$)"),
+         gir = str_extract(categ,"[^#]+(?=#[^#]+$)"),
+         lieu = str_extract(categ,"[^#]+$")) %>%
+  mutate(sexe = recode(sex,
+                      "female" = "Femmes",
+                      "male" = "Hommes",
+                      "all" = "Ensemble") %>% as.character())  %>%
+  mutate(pctDLEx = 100 - pctDFLEx)
+
+evapa60 <- evapa %>% 
+  filter(age==60) %>%
+  rename(annee = year)
+
+agealter <- 80
+
+evapa_agealter <- evapa %>% 
+  filter(age==agealter) %>%
+  mutate(pctDLEx = 100 - pctDFLEx) %>%
+  rename(annee = year) 
+
+
+```
+
+### En années {.unnumbered}
+
+```{r calcevapa_graph_an,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60 %>% filter(gir=="Ensemble",sexe=="Ensemble"), aes(x=annee,y=DLEx,colour=prestation)) +
+  geom_line() +
+  facet_grid( ~ nbclasses)+
+  labs(title = "Espérance de vie dans diverses prestations, en années"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+```
+
+### En % de l'EV à 60 ans {.unnumbered}
+ 
+
+```{r calcevapa_graph_pct,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60 %>% filter(gir=="Ensemble",sexe=="Ensemble"),
+         aes(x=annee,y=pctDLEx,colour=prestation)) +
+  geom_line() +
+  facet_grid( ~ nbclasses) +
+  labs(title = "Espérance de vie dans diverses prestations, en % de l'EV à 60 ans"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+#tabevapa60 <- evapa60  %>%
+#  select(prestation,nbclasses,annee,DLEx) %>%
+#  mutate(DLEx = round(DLEx,3)) %>%
+#  arrange(nbclasses,prestation,annee) %>%
+#  pivot_wider(id_cols=c("prestation","nbclasses"),
+#              names_from="annee",values_from="DLEx")
+#tabevapa60<- tabevapa60[,c("nbclasses","prestation",as.character(2010:2017))]
+#
+#kable(tabevapa60 %>%
+#  filter(nbclasses == "6 classes d'âge")) %>% kable_styling("hover","condensed")
+#
+#kable(tabevapa60 %>%
+#  filter(nbclasses == "8 classes d'âge")) %>% kable_styling("hover","condensed")
+
+```
+
+
+### Focus APA depuis 2010 {.unnumbered}
+ 
+Ce focus représente uniquement l'EVAPA à 60 ans depuis 2010, tous GIR et tous lieux confondus, afin de mieux voir les différences sur le graphique.
+
+```{r calcevapa_focus_apa,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60 %>% filter(gir=="Ensemble",sexe=="Ensemble",lieu=="ensemble",prestation=="APA",
+                            annee>=2010),
+         aes(x=annee,y=DLEx,colour=nbclasses,group=nbclasses)) +
+  geom_line() +
+  labs(title = "Espérance de vie dans l'APA à 60 ans, en années"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+## Variante selon la table de mortalité utilisée
+
+On compare ici les EVAPA à 60 ans calculées à partir des quotients de mortalité de la table T68 de l'Insee (correspondant à des moyennes sur trois années consécutives), c'est-à-dire celle choisie pour l'étude, aux EVAPA calculées à partir de la table de mortalité abrégée T69 de l'Insee, ici calculées à titre de tests de robustesse.
+
+On se contente de comparer les EVAPA à 60 pour l'APA tous GIR et tous lieux confondus. On utilise la méthode de lissage des prévalences par âge fin à partir des prévalences en 6 tranches d'âges.
+
+Au final, la série calculée à partir de la table T68 appparaît moins bruitée (du fait du lissage des coefficients de mortalité sur trois années consécutives), mais le message général de baisse de l'EVAPA depuis 2010 et l'ampleur de cette baisse semblent robustes au choix de la table de mortalité retenue. On reste donc sur le calcul à partir de la table T68.
+
+
+```{r test_robustesse_qmort,echo=FALSE}
+
+# == on recalcule les EVAPA à partir du tableau T69 de l'Insee
+
+tabqmort_t69 <- prevalApproxlong %>%
+  filter(sexe=="Ensemble",prestation=="APA",gir=="Ensemble",
+         nbclasses=="6 classes d'âge + lissage",annee>=2010) %>%
+  mutate(categ = paste(prestation,nbclasses,gir,lieu,sep="#"),
+         sex = recode(sexe,
+                      "Femmes" = "female",
+                      "Hommes" = "male",
+                      "Ensemble" = "all") %>% as.factor()) %>%
+  select(annee,age,categ,sex,prevalence) %>%
+  rename(year = annee,
+         pix = prevalence) %>%
+  left_join(
+    qmort_t69 ,
+    by = c("year","age","sex")
+  ) %>%
+  filter(!is.na(qx),!is.na(pix)) 
+
+evapa_t69 <- CompleteDFLEtable(tabqmort_t69) %>%
+  mutate(prestation = str_extract(categ,"^[^#]+"),
+         nbclasses = str_extract(categ,"[^#]+(?=#[^#]+#[^#]+$)"),
+         gir = str_extract(categ,"[^#]+(?=#[^#]+$)"),
+         lieu = str_extract(categ,"[^#]+$")) %>%
+  mutate(sexe = recode(sex,
+                      "female" = "Femmes",
+                      "male" = "Hommes",
+                      "all" = "Ensemble") %>% as.character())
+
+# == graphiques de comparaison
+
+  # EVAPA à 60 ans depuis 2010
+
+ggplotly(
+  graphloc(
+  bind_rows(
+      evapa60 %>% 
+        filter(prestation=="APA",sexe=="Ensemble",gir=="Ensemble",lieu=="ensemble",
+               nbclasses=="6 classes d'âge + lissage",annee>=2010) %>%
+        mutate(table = "T68"),
+      evapa_t69 %>% filter(age==60) %>% rename(annee = year) %>% mutate(table = "T69") ) %>%
+      select(annee,DLEx,table),
+    aes(y=DLEx,x=annee,colour=table,group=table) ) +
+    geom_line() +
+    geom_point() +
+    geom_text(aes(label=round(DLEx,2)),
+              hjust="center",vjust="top",nudge_y=0.015,check_overlap = TRUE) +
+    labs(title = "EV dans l'APA à 60 ans, selon la table de mortalité utilisée")
+)
+
+  # Part de l'EVAPA dans l'EV à 60 ans depuis 2010
+
+ggplotly(
+  graphloc(
+  bind_rows(
+      evapa60 %>% 
+        filter(prestation=="APA",sexe=="Ensemble",gir=="Ensemble",lieu=="ensemble",
+               nbclasses=="6 classes d'âge + lissage",annee>=2010) %>%
+        mutate(table = "T68"),
+      evapa_t69 %>% filter(age==60) %>% rename(annee = year) %>% 
+        mutate(table = "T69", pctDLEx = 100 - pctDFLEx ) ) %>%
+      select(annee,pctDLEx,table),
+    aes(y=pctDLEx,x=annee,colour=table,group=table) ) +
+    geom_line() +
+    geom_point() +
+    geom_text(aes(label=round(pctDLEx,1)),
+              hjust="center",vjust="top",nudge_y=0.05,check_overlap = TRUE) +
+    labs(title = "Part de l'EV dans l'APA dans l'EV à 60 ans, selon la table de mortalité utilisée")
+)
+
+
+  # EVAPA selon l'âge, en 2019
+
+ggplotly(
+  graphloc(
+  bind_rows(
+      evapa %>% 
+        filter(prestation=="APA",sexe=="Ensemble",gir=="Ensemble",lieu=="ensemble",
+               nbclasses=="6 classes d'âge + lissage",year==2019) %>%
+        mutate(table = "T68"),
+      evapa_t69 %>% filter(year==2019) %>% 
+        mutate(table = "T69") ) %>%
+    rename(annee = year) %>%
+    select(age,DLEx,table),
+    aes(y=DLEx,x=age,colour=table,group=table) ) +
+    geom_line() +
+    geom_point() +
+    labs(title = "EV dans l'APA en fonction de l'âge, selon la table de mortalité utilisée")
+)
+
+
+
+```
+
+
+## EV à 60 ans dans l'APA, selon le GIR  {.tabset .tabset-fade .tabset-pills}
+
+### En années {.unnumbered}
+
+```{r calcevapa_focusapa_an,echo=FALSE}
+
+# graphiques en lignes : EV dans l'APA par GIR et selon la définition
+
+ggplotly(
+graphloc(evapa60 %>% filter(grepl("^APA",prestation),sexe=="Ensemble"), 
+         aes(x=annee,y=DLEx,colour=nbclasses)) +
+  geom_line() +
+  facet_grid(gir ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA, en années"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+### En % de l'EV à 60 ans {.unnumbered}
+
+```{r calcevapa_focusapa_pct,echo=FALSE}
+
+
+ggplotly(
+graphloc(evapa60 %>% filter(grepl("^APA",prestation),sexe=="Ensemble"), 
+         aes(x=annee,y=pctDLEx,colour=nbclasses)) +
+  geom_line() +
+  facet_grid(gir ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA, en % de l'EV à 60 ans"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+## EV à 60 ans dans l'APA, selon le sexe  {.tabset .tabset-fade .tabset-pills}
+
+La ventilation par sexe n'est disponible qu'avec les données du panorama "Aide et action sociales en France", donc n'est calculé que pour celles-ci.
+
+### En années {.unnumbered}
+
+```{r calcevapa_focusapa_sexe,echo=FALSE}
+
+# graphiques en lignes : EV dans l'APA par GIR et selon la définition
+
+ggplotly(
+graphloc(evapa60 %>% filter(grepl("^APA",prestation),grepl("^pano AAS",nbclasses)), 
+         aes(x=annee,y=DLEx,colour=nbclasses)) +
+  geom_line() +
+  facet_grid(sexe ~ prestation) +
+  labs(title = "Espérance de vie dans l'APA, en années")  ,
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+### En % de l'EV à 60 ans {.unnumbered}
+
+```{r calcevapa_focusapa_sexe_pct,echo=FALSE}
+
+
+ggplotly(
+graphloc(evapa60 %>% filter(grepl("^APA",prestation),grepl("^pano AAS",nbclasses)), 
+         aes(x=annee,y=pctDLEx,colour=nbclasses)) +
+  geom_line() +
+  facet_grid(sexe ~ prestation) +
+  labs(title = "Espérance de vie dans l'APA, en % de l'EV à 60 ans"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+## APA : présentation en histogramme
+
+Dans le graphique ci-après, on calcule l'EVAPA à partir du lissage des prévalences en 6 tranches d'âges jusqu'à 2016, et du lissage des prévalences en 8 classes d'âge à partir de 2017.
+
+```{r calcevapa_focusapa_pargir,echo=FALSE}
+
+
+# graphiques en colonnes : EV dans l'APA depuis 2010, comme somme de composantes
+
+ggplotly(
+graphloc(evapa60 %>% 
+           filter(grepl("^APA",prestation),
+                  grepl("GIR[1234]$",gir),
+                  sexe=="Ensemble",
+                  annee>=2010,
+                  (annee <=2016 & nbclasses == "6 classes d'âge + lissage") |
+                    (annee > 2016 & nbclasses == "8 classes d'âge + lissage"))  %>%
+           select(annee,gir,prestation,pctDLEx, DLEx) %>%
+           pivot_longer(cols=-c("gir","prestation","annee"),names_to="indicateur",values_to="val"), 
+         aes(x=annee,y=val,fill=gir)) +
+  geom_col() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA, en années et en % de l'EV à 60 ans")
+)
+
+
+```
+
+## Erreur de mesure liée à la méthode de calcul de prévalences {.tabset .tabset-fade .tabset-pills}
+
+Les espérances de vie dans l'APA sont calculées alternativement à partir des 4 séries de prévalences dans l'APA selon l'âge : les prévalences moyennes par tranches d'âge en 6 ou 8 classes d'âge (selon que les 85 ans et plus soient regroupés ou non), et les prévalences lissées par âge fin (extrapoléesà partir des 6 ou 8 classes d'âge). 
+
+Le graphique qui suit représente les écarts entre les espérances de vie calculées, par rapport au calcul à partir des prévalences lissées d'après les valeurs moyennes en 8 tranches d'âge. Les écarts restent modérés. Le calcul à partir des prévalences moyennes en 6 classes d'âge aboutit à des EVAPA plus faibles, mais les trois autres méthodes s'avèrent assez proches.
+
+Dans ce qui suit, on retiendra donc le calcul d'après les prévalences lissées à partir des moyennes en 6 classes d'âge, qui présente l'avantage d'être disponible dès 2010, tout en restant assez proche du calcul à partir d'un détail par âge plus fin (ie celui en 8 classes d'âges).
+
+
+```{r calcevapa_focusapa_methodo,echo=FALSE}
+
+
+
+# graphique illustrant l'erreur de calcul pour l'estimation en 6 classes d'âge
+
+anrepr <- c(2016:max(evapa60$annee))
+titrerepr <- paste0(
+  "écart d'EV dans l'APA en ",
+  paste(anrepr,collapse=" et "),
+  ", en années, par rapport aux prévalences lissées à partir des observations sur 8 classes d'âge")
+
+evapaecart <- evapa60 %>% 
+  filter(grepl("^APA",prestation),annee %in% c(anrepr),sexe=="Ensemble" ) %>% 
+  select(gir,prestation,annee,nbclasses,DLEx)
+evapaecart <- evapaecart %>% filter(nbclasses != "8 classes d'âge + lissage") %>%
+  left_join(evapaecart %>% 
+              filter(nbclasses == "8 classes d'âge + lissage") %>%
+              select(-nbclasses) %>%
+              rename(DLExref=DLEx),
+            by = c("gir","prestation","annee")) %>%
+  mutate(ecart=round(DLEx-DLExref,3))
+
+gecartan <- function(anrepr) {
+  graphloc(evapaecart %>% filter(annee == anrepr), 
+         aes(x=as.factor(annee),y=ecart,fill=nbclasses)) +
+  geom_col(position = "dodge2") +
+  facet_grid(gir ~ prestation, scales="free") +
+  labs(title = titrerepr)
+}
+
+
+```
+
+### 2016 {.unnumbered}
+
+```{r calcevapa_focusapa_methodo_2016,echo=FALSE}
+ggplotly( gecartan(2016),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina) )
+
+```
+
+### 2017 {.unnumbered}
+
+```{r calcevapa_focusapa_methodo_2017,echo=FALSE}
+ggplotly( gecartan(2017),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina) )
+
+```
+
+### 2018 {.unnumbered}
+
+```{r calcevapa_focusapa_methodo_2018,echo=FALSE}
+ggplotly( gecartan(2018),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina) )
+
+```
+
+### 2019 {.unnumbered}
+
+```{r calcevapa_focusapa_methodo_2019,echo=FALSE}
+ggplotly( gecartan(2019),
+  height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+                fig.height*dpi/fig.retina) )
+
+```
+
+
+## Evolution en base 100 = 2010  {.tabset .tabset-fade .tabset-pills}
+
+On représente ci-après les évolutions de l'EV dans l'APA, par GIR et pour l'ensemble, en années et en % de l'EV totale à 60 ans, en base 100 = 2010. Pour une meilleure lisibilité du graphique, on retient uniquement le calcul de l'EVAPA réalisé à partir des prévalences lissées par âge fin extrapolées d'après les prévalences observées sur 6 classes d'âge.
+
+Le résultat le plus marquant est la forte diminution des GIR1, que ce soit à domicile où en établissement. Son ampleur est très largement supérieure à celle des autres GIR. L'ensemble des GIR 1 et 2 diminue aussi davantage que les GIR 3 et 4. Pour le reste, on observe des diminutions dans toutes les catégories de GIR et de lieu de résidence, sauf pour les GIR 1, 2 et 3 en établissement. Exprimés en % de l'EV totale, seuls les GIR 2 en établissement augmentent (sans doute du fait d'un effet de substitution avec les GIR 1).
+
+```{r calcevapa_focusapa_base100,echo=FALSE}
+
+# table avec les indicateurs en base 100 = 2010
+
+anbase <- 2010
+
+evapa60base100 <- evapa60 %>%
+  filter(nbclasses=="6 classes d'âge + lissage") %>% 
+  filter(grepl("^APA",prestation),annee>=anbase) %>%
+  filter(sexe == "Ensemble") %>%
+  select(annee,nbclasses,gir,prestation,pctDLEx, DLEx) %>%
+  pivot_longer(cols=-c("nbclasses","gir","prestation","annee"),names_to="indicateur",values_to="val")
+evapa60base100 <- evapa60base100 %>%
+  left_join(evapa60base100 %>%
+              filter(annee == anbase,nbclasses=="6 classes d'âge + lissage") %>%
+              select(gir,prestation,indicateur,val) %>%
+              rename(valbase=val),
+            by = c("gir","prestation","indicateur")) %>%
+  mutate(valbase100 = round(100*val/valbase,1) )
+
+
+```
+
+### Ensemble {.unnumbered}
+
+```{r calcevapa_focusapa_base100_ens,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60base100 %>%
+           filter(gir == "Ensemble"), 
+         aes(x=annee,y=valbase100,colour=gir,linetype=nbclasses) ) +
+  geom_line() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA à 60 ans, base 100 = 2010"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+### GIR 12 vs 34 {.unnumbered}
+
+```{r calcevapa_focusapa_base100_gir2,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60base100 %>%
+           filter(gir %in% c("GIR12","GIR34")), 
+         aes(x=annee,y=valbase100,colour=gir,linetype=nbclasses) ) +
+  geom_line() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA à 60 ans, base 100 = 2010"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+### Par GIR {.unnumbered}
+
+```{r calcevapa_focusapa_base100_gir4,echo=FALSE}
+
+ggplotly(
+graphloc(evapa60base100 %>%
+           filter(grepl("GIR[1234]$",gir)), 
+         aes(x=annee,y=valbase100,colour=gir,linetype=nbclasses) ) +
+  geom_line() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = "Espérance de vie dans l'APA à 60 ans, base 100 = 2010"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+## Comparaison des évolutions de l'EVAPA et des EVSI
+
+Pour tester la robustesse des résultats, on compare ici l'évolution de l'EVAPA depuis 2010 à celle des EVSI, calculées sur la base de l'indicateur GALI dans l'enquête SRCV de l'Insee. Les EVSI sont reprises de la publication *Etudes et résultats* n°1173. On représente à la fois l'EVSI et l'EVI (sans incapacité sévère ou non), et l'EVSH et l'EVH ("H" pour "handicap" : sans incapacité sévère).
+
+```{r compar_evsi}
+
+# évolution de l'APA
+
+evapaloc <- evapa60base100 %>%
+  filter(gir=="Ensemble",nbclasses=="6 classes d'âge + lissage")
+
+# évolution des EVI et EVH
+
+evsi <- ev %>%
+  filter(grepl("S",indicateur),sexe=="ensemble",annee>=2010) %>%
+  left_join(ev %>% 
+              filter(indicateur=="EV",sexe=="ensemble") %>% 
+              rename(evtot=ev) %>% 
+              select(-indicateur),
+            by=c("annee","sexe")) %>%
+  select(-sexe) %>%
+  mutate(DLEx = evtot-ev,
+         pctDLEx = DLEx/evtot,
+         indicateur = gsub("S","",indicateur)) %>%
+  rename(prestation = indicateur) %>%
+  select(prestation,annee,DLEx,pctDLEx) %>%
+  pivot_longer(cols=c("DLEx","pctDLEx"),names_to="indicateur",values_to="val")
+
+evsi <- evsi %>%
+  left_join(evsi %>%
+              filter(annee == anbase) %>%
+              select(prestation,indicateur,val) %>%
+              rename(valbase=val),
+            by = c("prestation","indicateur")) %>%
+  mutate(valbase100 = round(100*val/valbase,1),
+         annee = as.numeric(annee))
+
+# représentation graphique
+
+ggplotly(
+graphloc(bind_rows(evapaloc, evsi), 
+         aes(x=annee,y=valbase100,colour=prestation) ) +
+  geom_line() +
+  facet_grid( ~ indicateur) +
+  labs(title = "Espérance de vie dans l'APA à 60 ans et espérance de vie en incapacité à 65 ans, base 100 = 2010")
+)
+
+
+```
+
+## Synthèse évolution 2010-2019
+
+```{r calcevapa_focusapa_base100_tabsynth,echo=FALSE}
+
+
+# tableau synthétique de l'évolution 2010-2019
+
+anfin <- max(evapa60$annee)
+
+tabsynth <- bind_rows(
+  evapa60 %>%
+    filter(sexe=="Ensemble") %>%
+    select(annee,ex) %>%
+    distinct() %>%
+    mutate(prestation="EV", gir="EV"),
+  evapa60 %>%
+    filter(sexe=="Ensemble") %>%
+    filter(nbclasses=="6 classes d'âge + lissage", 
+           grepl("^APA",prestation)) %>%
+    select(annee,gir,prestation,DLEx) %>%
+    rename(ex = DLEx)
+  )  %>%
+  filter(annee %in% c(anbase,anfin)) %>%
+  pivot_wider(id_cols=c("gir","prestation"),names_prefix="an",names_from="annee",values_from="ex") %>%
+  mutate(evol.mois = round(12*(an2019-an2010),1),
+         evol.pct =round(100*(an2019/an2010-1),1)) %>%
+  select(-an2019,-an2010) %>%
+  pivot_longer(cols=c("evol.mois","evol.pct"),names_to="indic",values_to="val") %>%
+  mutate(gir = factor(gir, 
+                      levels=c("EV","Ensemble","GIR12","GIR1","GIR2","GIR34","GIR3","GIR4"))) %>%
+  arrange(gir) %>%
+  mutate(duree = ifelse(prestation=="EV","Espérance de vie",paste("APA",gir,sep=", ")),
+         lieu = case_when(grepl("dom",prestation) ~ "domicile",
+                          grepl("etab",prestation) ~ "établissement",
+                          !grepl("etab|dom",prestation) ~ "ensemble"),
+         indic = paste(lieu,indic,sep=".")) %>%
+  select(duree,indic,val) %>%
+  pivot_wider(id_cols="duree",names_from="indic",values_from="val")
+tabsynth <- tabsynth %>%
+  mutate_at(names(tabsynth[grepl("pct$",names(tabsynth))]),function(x){paste(as.character(x),"%")})
+         
+kable(tabsynth) %>% kable_styling("hover","condensed")
+
+```
+
+## Décomposition entre effet EV et effet prévalence  {.tabset .tabset-fade .tabset-pills}
+
+Dans ce qui suit, on décompose l'augmentation (en années) de l'EV dans l'APA en augmentation à mortalité constante (captant uniquement l'effet de la baisse des prévalences par âge) et augmentation à prévalence constante (captant uniquement l'effet de la baisse de la mortalité). Pour cela, on calcule l'EV à partir des prévalences de l'année N et de la mortalité de l'année N-1 :
+
+* la composante "à mortalité constante" est calculée à partir des prévalences en N-1 et N et de la mortalité en N-1,
+* le composante "à prévalence constante" est calculée à partir des prévalences en N et de la mortalité en N-1 et N.
+
+```{r calcevapa3,echo=FALSE,fig.height=30}
+
+# calcul des EVAPA à partir des coefficients de mortalité de l'année N-1
+
+
+tabqmortlag <- prevalApproxlong %>%
+  filter(sexe == "Ensemble") %>%
+  mutate(categ = paste(prestation,nbclasses,gir,lieu,sep="#")) %>%
+  select(annee,age,categ,prevalence) %>%
+  rename(year = annee,
+         pix = prevalence) %>%
+  left_join(
+    qmort %>% filter(sex == "all") %>%
+      mutate(year=year+1) ,
+    by = c("year","age")
+  ) %>%
+  filter(!is.na(qx),!is.na(pix))
+
+evapalag <- CompleteDFLEtable(tabqmortlag) %>%
+  mutate(prestation = str_extract(categ,"^[^#]+"),
+         nbclasses = str_extract(categ,"[^#]+(?=#[^#]+#[^#]+$)"),
+         gir = str_extract(categ,"[^#]+(?=#[^#]+$)"),
+         lieu = str_extract(categ,"[^#]+$"))  %>%
+  mutate(pctDLEx = 100 - pctDFLEx)
+
+evapa60lag <- evapalag %>% 
+  filter(age==60) %>%
+  rename(annee = year) 
+
+
+# table avec les différents éléments pour la décomposition de Delta_EVAPA
+
+  # on définit d'abord une fonction auxiliaire pour les arrondis
+arrond_d <- function(tab) {
+  tab %>%
+    mutate_at(c(names(tab)[grepl("^d_DLE",names(tab))]) , function(x){round(x,1)}) %>%
+    mutate_at(c(names(tab)[grepl("^d_pctDLE",names(tab))]) , function(x){round(x,2)})
+}
+
+  # on crée la table
+decompevapa60 <- evapa60 %>%
+  filter(sexe == "Ensemble") %>%
+  select(annee,prestation,nbclasses,gir,lieu,DLEx,pctDLEx) %>%
+  rename(DLEX_mortN_prevalN = DLEx,
+         pctDLEX_mortN_prevalN = pctDLEx) %>%
+  left_join(evapa60 %>%
+              filter(sexe == "Ensemble") %>%
+              select(annee,prestation,gir,lieu,nbclasses,DLEx,pctDLEx) %>%
+              mutate(annee=annee+1) %>%
+              rename(DLEX_mortN1_prevalN1 = DLEx,
+                     pctDLEX_mortN1_prevalN1 = pctDLEx),
+            by = c("annee","prestation","nbclasses","gir","lieu")) %>%
+  left_join(evapa60lag %>%
+              select(annee,prestation,nbclasses,gir,lieu,DLEx,pctDLEx) %>%
+              rename(DLEX_mortN1_prevalN = DLEx,
+                     pctDLEX_mortN1_prevalN = pctDLEx),
+            by = c("annee","prestation","nbclasses","gir","lieu")) %>%
+  mutate(d_DLEx = 12*(DLEX_mortN_prevalN - DLEX_mortN1_prevalN1),
+         d_DLEx_prevconst = 12*(DLEX_mortN_prevalN - DLEX_mortN1_prevalN),
+         d_DLEx_mortconst = 12*(DLEX_mortN1_prevalN - DLEX_mortN1_prevalN1),
+         d_pctDLEx = (pctDLEX_mortN_prevalN - pctDLEX_mortN1_prevalN1),
+         d_pctDLEx_prevconst = (pctDLEX_mortN_prevalN - pctDLEX_mortN1_prevalN),
+         d_pctDLEx_mortconst = (pctDLEX_mortN1_prevalN - pctDLEX_mortN1_prevalN1)) %>%
+  filter(nbclasses == "6 classes d'âge + lissage")
+  #filter((annee <=2016 & nbclasses == "6 classes d'âge + lissage") |
+  #         (annee > 2016 & nbclasses == "8 classes d'âge + lissage"))
+
+cumdecompevapa60 <- decompevapa60 %>%
+  filter(annee>2010) %>%
+  select(annee,prestation,gir,lieu,
+         c(names(decompevapa60)[grepl("^d_",names(decompevapa60))]) ) %>%
+  group_by(prestation,gir,lieu) %>%
+  mutate_at(c(names(decompevapa60)[grepl("^d_",names(decompevapa60))]) , cumsum) %>%
+  ungroup() %>%
+  arrond_d()
+
+decompevapa60 <- decompevapa60 %>%  arrond_d()
+
+```
+
+### En mois {.unnumbered}
+
+```{r calcevapa3_graph_an,echo=FALSE}
+
+# représentation graphique de la décomposition
+
+
+ggplotly(
+graphloc(decompevapa60 %>% filter(grepl("^APA",prestation),annee>=2008), 
+         aes(x=annee)) +
+  geom_col(aes(y=d_DLEx_mortconst),fill="red") +
+  geom_col(aes(y=d_DLEx_prevconst),fill="blue") +
+  geom_line(aes(y=d_DLEx)) +
+  geom_point(aes(y=d_DLEx)) +
+  facet_grid(gir ~ prestation ,scale="free" ) +
+  labs(title="Décomposition de l'augmentation de l'EV dans l'APA, en mois"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+### En points de % de l'EV à 60 ans {.unnumbered}
+
+```{r calcevapa3_graph_pct,echo=FALSE}
+
+ggplotly(
+graphloc(decompevapa60 %>% filter(grepl("^APA",prestation),annee>=2008), 
+         aes(x=annee)) +
+  geom_col(aes(y=d_pctDLEx_mortconst),fill="red") +
+  geom_col(aes(y=d_pctDLEx_prevconst),fill="blue") +
+  geom_line(aes(y=d_pctDLEx)) +
+  geom_point(aes(y=d_pctDLEx)) +
+  facet_grid(gir ~ prestation ,scale="free") +
+  labs(title="Décomposition de l'augmentation de l'EV dans l'APA, en % de l'EV totale à 60 ans"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+### Cumuls annuels (en mois, depuis 2010) {.unnumbered}
+
+```{r calcevapa3_graph_cumannu,echo=FALSE}
+
+# représentation graphique de la décomposition
+
+
+ggplotly(
+graphloc(cumdecompevapa60 %>% filter(grepl("^APA",prestation),annee>=2008), 
+         aes(x=annee)) +
+  geom_col(aes(y=d_DLEx_mortconst),fill="red") +
+  geom_col(aes(y=d_DLEx_prevconst),fill="blue") +
+  geom_line(aes(y=d_DLEx)) +
+  geom_point(aes(y=d_DLEx)) +
+  facet_grid(gir ~ prestation ,scale="free" ) +
+  labs(title="Décomposition de l'augmentation de l'EV dans l'APA : cumul depuis 2010 (en mois)"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+## {-}
+
+Pour aller un peu plus loin, on essaie maintenant de décomposer la contribution de la baisse des prévalences à la diminution de l'EVAPA par classe d'âge. L'idée est de savoir dans quelle tranche d'âge la durée de vie passée dans l'APA diminue le plus. 
+
+On utilise pour cela le fait que l'espérance de vie à un âge donné correspond à la somme des coefficients de survie à partir de cet âge. Les contributions à l'EV de chaque tranche correspondent donc aux sommes partielles des coefficients par tranche.
+
+Il serait intéressant de regarder à un niveau fin, en décomposant par âge quinquennal jusqu'à 95 ans par exemple. Néanmoins, du fait de la fragilité du lissage des prévalences après 85 ans, on se contente de tranches d'âges assez agrégées : moins de 75 ans, 75-84 ans, 85 ans et plus.
+
+
+```{r contribage_evapa,echo=FALSE}
+
+  # on crée la table
+
+tabdecomp <- function(tab) {
+  tab  %>%
+    rename(annee = year) %>%
+    filter(grepl("^APA",prestation)) %>%
+    select(annee,prestation,nbclasses,gir,lieu,age,Lx,DFLx) %>%
+    mutate_at(c("Lx","DFLx"),function(x){x/100000}) %>%
+    mutate(DLEX = Lx-DFLx,
+           trAge = cut(age, breaks=c(60,75,85,Inf),
+                       include.lowest = TRUE, right = FALSE )) %>%
+    select(-age,-Lx,-DFLx) %>%
+    group_by(annee,prestation,nbclasses,gir,lieu,trAge) %>% summarise_all(sum) %>% ungroup()
+}
+
+decompevapa_age <- tabdecomp(evapa %>% filter(sexe == "Ensemble")) %>%
+  rename(DLEX_mortN_prevalN = DLEX) %>%
+  left_join(tabdecomp(evapa %>% filter(sexe == "Ensemble")) %>%  
+              mutate(annee=annee+1) %>%
+              rename(DLEX_mortN1_prevalN1 = DLEX),
+            by = c("annee","prestation","nbclasses","gir","lieu","trAge")) %>%
+  left_join(tabdecomp(evapalag) %>%  
+              rename(DLEX_mortN1_prevalN = DLEX),
+            by = c("annee","prestation","nbclasses","gir","lieu","trAge")) %>%
+  mutate(d_DLEx = 12*(DLEX_mortN_prevalN - DLEX_mortN1_prevalN1),
+         d_DLEx_prevconst = 12*(DLEX_mortN_prevalN - DLEX_mortN1_prevalN),
+         d_DLEx_mortconst = 12*(DLEX_mortN1_prevalN - DLEX_mortN1_prevalN1)) %>%
+  filter(nbclasses == "6 classes d'âge + lissage")
+  #filter((annee <=2016 & nbclasses == "6 classes d'âge + lissage") |
+  #         (annee > 2016 & nbclasses == "8 classes d'âge + lissage"))
+
+cumdecompevapa_age <- decompevapa_age %>%
+  filter(annee>2010) %>%
+  select(annee,prestation,gir,lieu,trAge,
+         c(names(decompevapa_age)[grepl("^d_",names(decompevapa_age))]) ) %>%
+  group_by(prestation,gir,lieu,trAge) %>%
+  mutate_at(c(names(decompevapa_age)[grepl("^d_",names(decompevapa_age))]) , cumsum) %>%
+  ungroup() 
+
+#decompevapa_age <- decompevapa_age %>%  arrond_d()
+
+# graphique : décomposition des contributions à la variation 2010-2019 cumulée, par âge et type
+
+ggplotly(
+graphloc(cumdecompevapa_age %>% 
+           filter(grepl("^APA",prestation),annee == 2019) %>%
+           arrond_d(), 
+         aes(x=trAge)) +
+  geom_col(aes(y=d_DLEx_mortconst),fill="red") +
+  geom_col(aes(y=d_DLEx_prevconst),fill="blue") +
+  #geom_line(aes(y=d_DLEx)) +
+  #geom_point(aes(y=d_DLEx)) +
+  facet_grid(gir ~ prestation ,scale="free" ) +
+  labs(title="Décomposition de contributions à la diminution de l'EV dans l'APA cumulée depuis 2010 (en mois), par lieu et GIR"),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+# graphique pour l'APA (totale) en ajoutant le lieu dans la décomposition
+ggplotly(
+graphloc(cumdecompevapa_age %>% 
+           filter(grepl("^APA",prestation),annee == 2019,
+                  gir=="Ensemble",lieu != "ensemble") %>%
+           arrond_d(), 
+         aes(x=trAge)) +
+  geom_col(aes(y=d_DLEx_mortconst,fill=lieu,alpha="effet baisse des prévalences")) +
+  geom_col(aes(y=d_DLEx_prevconst,fill=lieu,alpha="effet gains d'EV")) +
+  geom_point(data = cumdecompevapa_age %>% 
+           filter(prestation=="APA",annee == 2019,
+                  gir=="Ensemble",lieu == "ensemble"),
+           aes(y=d_DLEx,x=trAge),colour="black") +
+  labs(title="Contributions à la diminution de l'EV dans l'APA cumulée depuis 2010 (en mois)")
+)
+
+```
+
+## Diminution de l'EVAPA entre 2010 et 2019 selon l'âge
+
+On peut aussi calculer l'EVAPA à d'autres âges que 60 ans.
+
+On représente ci-après l'évolution de l'EVAPA entre 2010 et 2019, en estimant cet EV à chaque âge à partir de 60 ans. Lorsqu'on formule des hypothèses sur les évolutions des EVSI en projection, on suppose en effet des évolutions uniformes à tous les âges auxquels ces EVSI sont calculées.
+
+En pratique, cette hypothèse ne semble pas totalement vérifiée : la variation 2010/2019 de l'EVAPA est à peu près uniforme jusque 75 ans, mais la diminution est plus marquée pour les GIR 12 et moins marquée pour les GIR 34 après cet âge.
+
+```{r dimevapa_2010_2019}
+
+anref <- c(2015,2019)
+
+dimevapa <- evapa %>%
+  filter(grepl("^APA",prestation),
+         nbclasses=="6 classes d'âge + lissage",
+         year %in% c(2010,anref),
+         sexe=="Ensemble") %>%
+  select(year,age,prestation,gir,lieu,DLEx)
+
+dimevapa <- dimevapa %>% filter(year %in% c(anref)) %>% rename(DLExref=DLEx) %>%
+  left_join(dimevapa %>% filter(year==2010) %>% rename(DLEx2010=DLEx) %>% select(-year),
+            by=c("age","prestation","gir","lieu")) %>%
+  mutate(dim_evapa=DLExref/DLEx2010-1)
+
+# représentation graphique
+
+ggplotly(
+graphloc(dimevapa, 
+         aes(x=age,y=dim_evapa,colour=gir,group=gir) ) +
+  geom_line() +
+  facet_grid(year ~ lieu, scales="free") +
+  labs(title = "Diminution de l'EVAPA par rapport à 2010, selon l'âge")
+)
+
+```
+
+Il faut toutefois rester prudent sur les EVAPA calculées à des âges élevés car, si l'EVAPA à 60 ans diffère très peu selon la méthode retenue (ie selon le nombre de tranches d'âge sur lesquelles sont observées les prévalences et le lissage ou non par âge fin de ces prévalences), ce n'est pas forcément le cas à tous les âges. Les prévalences par âge fin obtenues avec les différentes méthodes se distinguent en effet plus fortement aux grands âges, donc les EVAPA pourraient être davantage différentes lorsque calculées à un âge plus élevé.
+
+Les graphiques qui suivent visent à comparer l'EVAPA en fonction de l'âge, en niveau ou en évolution, selon la méthode de calcul des prévalences. Le premier présente l'EVAPA en niveau, le second en évolution 2017-2018 (afin de pouvoir comparer les trois méthodes). On ne retient que les méthodes s'appuyant sur les prévalences lissées par âge fin : le calcul de l'EVAPA à des ages élevés n'a en fait pas de sens lorsqu'on retient une prévalence moyenne calculée sur toute une tranche d'âge (par exemple l'EVAPA à 90 ou 95 ans calculée en considérant uniquement la prévalence moyenne sur l'ensemble des 85 et plus ...)
+
+Les graphiques confirment le manque de robustesse pour les EVAPA à 80 ans ou plus. On évitera donc de calculer et commenter ces EVAPA, et on s'en tiendra dans les diffusions (à ce stade en tous cas) aux EVAPA à 60 ans.
+
+```{r comevapa_age_methode}
+
+# préparation des données pour les graphiques
+
+compevapaage <- evapa %>%
+  filter(grepl("^APA",prestation),
+         grepl("lissage",nbclasses),
+         year %in% c(2010,2016:2019),
+         gir %in% c("Ensemble","GIR12","GIR34"),
+         sexe=="Ensemble") %>%
+  select(year,age,prestation,gir,nbclasses,lieu,DLEx)
+
+dimcompevapaage <- compevapaage %>% filter(year %in% c(2018)) %>% rename(DLExref=DLEx) %>%
+  left_join(compevapaage %>% filter(year==2017) %>% rename(DLEx2017=DLEx) %>%
+              select(-year),
+            by=c("age","prestation","gir","lieu","nbclasses")) %>%
+  mutate(dim_evapa=DLExref/DLEx2017-1)
+
+# graphique : niveau en 2018
+
+ggplotly(
+graphloc(compevapaage %>% filter(year==2018, gir %in% c("Ensemble","GIR12","GIR34")), 
+         aes(x=age,y=DLEx,colour=nbclasses,group=nbclasses) ) +
+  geom_line() +
+  facet_grid(lieu ~ gir, scales="free") +
+  labs(title = "EVAPA à chaque âge à partir de 60 ans en 2018, selon la méthode")
+)
+
+# graphique : évolution 2017-2018
+
+ggplotly(
+graphloc(dimcompevapaage, 
+         aes(x=age,y=dim_evapa,colour=nbclasses,group=nbclasses) ) +
+  geom_line() +
+  facet_grid(lieu ~ gir, scales="free") +
+  labs(title = "Evolution entre 2017 et 2018 de l'EVAPA à chaque âge à partir de 60 ans, selon la méthode")
+)
+
+# graphique : par sexe en 2018 (données pano AAS)
+
+compevapaage_sexe <- evapa %>%
+  filter(grepl("^APA",prestation),
+         nbclasses == "pano AAS + lissage",
+         year %in% c(2010,2016:2019)) %>%
+  select(year,age,prestation,sexe,lieu,DLEx)
+
+ggplotly(
+graphloc(compevapaage_sexe %>% 
+           filter(year==2018), 
+         aes(x=age,y=DLEx,colour=sexe,group=sexe) ) +
+  geom_line() +
+  facet_grid( ~ lieu, scales="free") +
+  labs(title = "EVAPA à chaque âge à partir de 60 ans en 2018, selon le sexe")
+)
+
+```
+
+>A noter un résultat qui n'est pas totalement intuitif lorsqu'on représente les EVAPA selon l'âge : ces EV sont *croissantes* avec l'âge, pour les âges les plus jeunes au moins, alors que l'EV totale décroît mécaniquement de façon monotone avec l'âge d'observation. Ce résultat contre-intuitif est lié au fait que l'APA est surtout versée aux très grands âges : les seniors qui décèdent tôt (avant 75-80 ans) ont donc une probabilité nettement plus élevée de décéder avant d'avoir pu bénéficier de l'APA, et donc de "compter" pour une durée d'APA nulle dans l'EVAPA à 60 ans. En considérant un âge d'observation plus élevé, on augmente la probilité de bénéficier un jour de l'APA parmi les survivants, d'où l'EVAPA plus élevée.
+
+## Evolution de l'EVAPA à `r agealter` ans en base 100 = 2010  {.tabset .tabset-fade .tabset-pills}
+
+On représente ci-après des graphiques similaires, mais pour l'EV dans l'APA calculée à l'âge de `r agealter` ans plutôt qu'à 60 ans.
+
+```{r calcevapa_focusapaagealter_base100,echo=FALSE}
+
+# table avec les indicateurs en base 100 = 2010
+
+anbase <- 2010
+
+evapaalterbase100 <- evapa_agealter %>%
+  filter(nbclasses=="6 classes d'âge + lissage") %>% 
+  filter(grepl("^APA",prestation),annee>=anbase) %>%
+  filter(sexe == "Ensemble") %>%
+  select(annee,nbclasses,gir,prestation,pctDLEx, DLEx) %>%
+  pivot_longer(cols=-c("nbclasses","gir","prestation","annee"),names_to="indicateur",values_to="val")
+evapaagealterbase100 <- evapaalterbase100 %>%
+  left_join(evapaalterbase100 %>%
+              filter(annee == anbase,nbclasses=="6 classes d'âge + lissage") %>%
+              select(gir,prestation,indicateur,val) %>%
+              rename(valbase=val),
+            by = c("gir","prestation","indicateur")) %>%
+  mutate(valbase100 = round(100*val/valbase,1) )
+
+
+```
+
+
+### Par GIR regroupés {.unnumbered}
+
+```{r calcevapa_focusapaagealter_base100_gir2,echo=FALSE}
+
+ggplotly(
+graphloc(evapaagealterbase100 %>%
+           filter(gir %in% c("Ensemble","GIR12","GIR34")), 
+         aes(x=annee,y=valbase100,colour=gir,linetype=nbclasses) ) +
+  geom_line() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = paste("Espérance de vie dans l'APA à",agealter,"ans, base 100 = 2010")),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+### Par GIR {.unnumbered}
+
+```{r calcevapa_focusapaagealter_base100_gir4,echo=FALSE}
+
+ggplotly(
+graphloc(evapaagealterbase100 %>%
+           filter(grepl("GIR[1234]$",gir)), 
+         aes(x=annee,y=valbase100,colour=gir,linetype=nbclasses) ) +
+  geom_line() +
+  facet_grid(indicateur ~ prestation, scales="free") +
+  labs(title = paste("Espérance de vie dans l'APA à",agealter,"ans, base 100 = 2010")),
+height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+              fig.height*dpi/fig.retina)
+)
+
+```
+
+
+
+# Prévalences de l'APA à domicile par département
+
+On calcule et présente ici des prévalences par âge quinquennal au niveau *départemental*. On ne présente ici que l'APA à domicile. 
+
+On travaille ici sur une seule année. Les données départementales sur l'APA à domicile par âge quinquennal sont extraites du fichier annuel sur l'âge par sexe, gir et âge téléchargeable sous data.drees.
+
+**RQ : cette partie n'est pas aboutie, et le graphique obtenu n'est pour l'instant pas lisible ... On abandonne cette piste à ce stade**
+
+```{r prevaldep,echo=FALSE}
+
+anrefdep <- 2019
+
+# récupération des données 2019 sur data.drees
+
+#effdep <- dreestools::extrait_onglet(
+#  file = "data-raw/APA - Données détaillées par GIR, âge et sexe en 2019.xlsx",
+#  sheet = "APA par age"
+#)
+
+effdep <- asdep::readSheetDrees(
+  fich = paste0("data-raw/APA - Données détaillées par GIR, âge et sexe en ",anrefdep,".xlsx"),
+  sheet = "APA par age",
+  nlignetitre = 2
+  )$tab
+names(effdep) <- names(effdep) %>%
+  str_replace("\\.NA$","") %>%
+  str_replace("&#10;[[:space:]]*","")
+effdep <- effdep %>%
+  pivot_longer(cols=-names(effdep)[!grepl("^(Dom|Etab)",names(effdep))],
+               names_to="categ",
+               values_to="nb") %>%
+  mutate(lieu = gsub("\\..*$","",categ),
+         trAge = gsub("^[^\\.]*\\.","",categ),
+         nb = as.numeric(nb)) %>%
+  select(-categ) %>%
+  filter(!is.na(nb),trAge != "Total")
+effdep <- effdep %>%
+  filter(!(Departement %in% unique((effdep %>% filter(trAge=="Inconnu" & nb>0))$Departement))) %>%
+  filter(trAge != "Inconnu",
+         lieu == "Domicile")
+
+effdep <- effdep %>%
+  mutate(age = recode(tolower(gsub(" a "," à ",trAge)), !!!trancheage))
+
+# récupération des populations départementales et calcul des prévalences
+# RQ : les populations départementales sont reprises du site de l'Insee
+
+#popdep <- asdep::readSheetDrees(
+#  #fich = "https://www.insee.fr/fr/statistiques/fichier/1893198/estim-pop-dep-sexe-aq-1975-2021.xlsx",
+#  fich = "data-raw/estim-pop-dep-sexe-aq-1975-2021.xlsx", 
+#  sheet = "2020",
+#  nlignetitre=2
+#)$tab
+
+popdep <- read.xlsx(
+  xlsxFile = "data-raw/estim-pop-dep-sexe-aq-1975-2021.xlsx",
+  #xlsxFile = "https://www.insee.fr/fr/statistiques/fichier/1893198/estim-pop-dep-sexe-aq-1975-2021.xlsx", 
+  sheet =  as.character(anrefdep+1),
+  startRow = 5, cols = c(1:22),
+  colNames = TRUE, skipEmptyRows = TRUE, skipEmptyCols = TRUE) %>%
+  rename(Codedepartement = X1,
+         Departement=X2) %>%
+  pivot_longer(cols=-c("Codedepartement","Departement" ),
+               names_to="trAge",values_to="pop") %>%
+  mutate(trAge = gsub("\\."," ",trAge),
+         trAge = ifelse(grepl("ans$",trAge),paste("de",trAge),trAge),
+         age = recode(trAge, !!!trancheage),
+         Departement = trimws(Departement)) %>%
+  filter(age %in% unique(effdep$age)) %>%
+  select(-trAge)
+
+effdep <- effdep %>%
+  left_join(popdep, by=c("Codedepartement","Departement","age")) %>%
+  mutate(prevalencedep = nb/pop) %>%
+  left_join(prevalences %>%
+              filter(prestation == "APAdom",
+                     annee == anrefdep,
+                     gir == "Ensemble") %>%
+              select(age,prevalence) %>%
+              rename(prevalencenat=prevalence),
+            by = "age") %>%
+  filter(!is.na(prevalencedep)) %>%
+  mutate(ratiopreval = prevalencedep / prevalencenat,
+         categ = case_when(
+           ratiopreval>1.05 ~ "> +5 %",
+           ratiopreval<0.95 ~ "< -5 %",
+           TRUE ~ "+/- 5 %"
+         ))
+
+```
+
+```{r prevaldep_graph}
+
+if (FALSE) {
+
+couleurs <- c("red","grey","green","black")
+names(couleurs) <- c("> +5 %","+/- 5 %","< -5 %","black")
+
+# grille des départements par ordre alphabétique
+
+#ggplotly(
+#  ggplot(effdep,
+#         aes(x=age)) +
+#    geom_line(aes(y=prevalencenat,group="black"),colour="black") +
+#    geom_point(aes(y=prevalencedep,colour=categ)) +
+#    geom_line(aes(y=prevalencedep,colour=categ,group=age)) +
+#    scale_colour_manual(values=couleurs) +
+#    facet_wrap( ~ Departement) +
+#    labs(title = "Prévalences dans l'APA à domicile selon l'âge, par département")  ,
+#height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+#              fig.height*dpi/fig.retina)
+#)
+
+# grille des départements par position géographique
+
+  #==
+  # Importation de la grille géographique
+
+library(sf)
+library(geogrid)
+library(geofacet)
+library(janitor)
+
+
+# sources -----------------------------------------------------------------
+pathdep <- "C:/Users/PA/Documents/R/GEOFLA/1_DONNEES_LIVRAISON_2016-06-00235/GEOFLA_2-2_SHP_LAMB93_FR-ED161/DEPARTEMENT"
+
+# données -----------------------------------------------------------------
+dep <- read_sf(paste0(pathdep, "/DEPARTEMENT.shp")) %>%
+  clean_names() %>%
+  left_join(asdep::departementsFR, by= c("code_dept" = "NumDept")) %>%
+  rename(NumDept = code_dept) %>%
+  select(NumDept)
+
+# ==== carte avec grille pour graphiques par département
+grid_fr <- dep %>%
+  left_join(asdep::departementsFR, by= c("NumDept")) %>%
+  select(Departement,NumDept) %>%
+  grid_auto(names = "Departement", codes = "NumDept", seed = 4) %>%
+  add_row(row = 8,col = 1,
+          name_Departement = "Guadeloupe",  code_NumDept = "971") %>%
+  add_row(row = 9, col = 1,
+          name_Departement = "Martinique", code_NumDept = "972") %>%
+  add_row(row = 10, col = 1,
+          name_Departement = "Guyane", code_NumDept = "973") %>%
+  add_row(row = 11, col = 1,
+          name_Departement = "La Réunion", code_NumDept = "974") %>%
+  add_row(row = 12, col = 1,
+          name_Departement = "Mayotte", code_NumDept = "976")
+grid_fr[grid_fr$code_NumDept %in% c("2A", "2B"), "col"] <- 13
+grid_fr[grid_fr$code_NumDept %in% c("2A", "2B"), "row"] <- grid_fr[grid_fr$code_NumDept %in% c("2A", "2B"), "row"] - 1
+
+  #==
+
+
+#ggplotly(
+  ggplot(effdep %>%
+           rename(code_NumDept = Codedepartement),
+         aes(x=age)) +
+    geom_line(aes(y=prevalencenat,group="black"),colour="black") +
+    geom_point(aes(y=prevalencedep,colour=categ)) +
+    geom_line(aes(y=prevalencedep,colour=categ,group=age)) +
+    scale_colour_manual(values=couleurs) +
+    facet_geo(~ Departement, grid = grid_fr) +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(labels = NULL) +
+    labs(title = "Prévalences dans l'APA à domicile selon l'âge, par département")   #,
+#height = with(knitr::opts_current$get(c("fig.height", "dpi", "fig.retina")),
+#              fig.height*dpi/fig.retina)
+#)
+
+}  
+  
+```
+
+# Conséquences sur les projections du nombre de bénéficiaires de l'APA
+
+Les projections d'évolution du nombre de bénéficiaires de l'APA, réalisées par exemple grâce au modèle LIVIA de la DREES, s'appuient généralement sur trois hypothèses d'évolution des EVSI. Une hypothèse pessimiste consiste à supposer que tous les gains d'espérance de vie après 60 ans sont passés en incapacité, tandis que l'hypothèse optimiste suppose que tous les gains sont passés sans incapacité ; une hypothèse intermédiaire, généralement mise en avant comme scénario "central" suppose que les gains d'espérance de vie se répartissent entre vie sans et en incapacité, au prorata des proportions observées aujourd'hui.
+
+L'évolution observée entre 2010 et 2019 pour l'EVAPA, confirmée par l'évolution observée des EVI calculées à partir de l'indicateur GALI, est cependant celle d'une *diminution* de la durée de vie dans l'APA ou en incapacité, malgré les gains d'espérance de vie au grand âge. Cette tendance observée s'avère donc encore plus favorable que l'hypothèse qualifiée d'optimiste dans les projections du modèle LIVIA. Si elle se prolongeait à l'avenir, le nombre anticipé de bénéficiaires de l'APA pourrait donc s'avérer plus faible que dans les projections actuelles, sur lesquelles s'appuient par exemple les hypothèses de la loi grand âge-autonomie.
+
+Dans cette section, on estime les évolutions prévisibles du nombre de bénéficiaires de l'APA, par lieu et par GIR regroupé (GIR12 et GIR 34), calculées en extrapolant les tendances observées sur la période 2010-2019, ainsi que sur la période 2015-2019 (pour tenir compte d'une éventuelle inflexion). Ces projections sont comparées à celles du modèle LIVIA, disponibles sous data.drees. Comme pour le calcul des espérances de vie, les projections des prévalences à partir d'hypothèses sur les EVAPA sont réalisées au moyen des fonctions du package *healthexpectancies*.
+
+## Hypothèses de projection
+
+La section précédente a montré que les EVAPA n'évoluent pas de façon uniforme selon l'âge auquel elles sont calculées. Les hypothèses d'évolution sont donc formulées directement sur les prévalences à chaque âge : on extrapole linéairement la tendance 2010-2019 ou 2015-2019 observée à chaque âge fin. On s'appuie pour cela sur les prévalences lissées par âge fin, obtenue à partir de la ventilation des bénéficiaires de l'APA en 6 tranches d'âge (ie celle regroupant tous les 85 ans et plus, disponible depuis 2010). En pratique, ce sont les transformations logit des prévalences qu'on extrapole linéairement (c'est-à-dire les valeurs $log(\frac{p}{1-p})$), et non les prévalences elles-mêmes.
+
+A titre de comparaison, on représente aussi des projections réalisées à partir d'hypothèses formulées sur les évolutions des espérances de vie dans l'APA : *EVcst2019* suppose que l'EVAPA reste constante à sa valeur de 2019 (à tous âges après 60 ans), et *EVtrend1019* extrapole linéairement après 2019 l'évolution de l'EVAPA à tous âges observée entre 2010 et 2019. On utilise la fonction *CompleteDFLEtable* du package *healthexpectancies* pour calculer les prévalences en projections à partir des EVAPA projetées.
+
+Les prévalences par âge fin sont projetées pour les 4 catégories obtenues en croisant lieu de résidence (domicile/établissement) et GIR regroupé (GIR12 / GIR34).
+
+Les projections démographiques (population et quotients de mortalité) sont réalisées avec le scénario de mortalité haute (ie d'espérance de vie basse) des dernières projections de l'Insee. C'est en effet maintenant le scénario qui est jugé le plus vraisemblable, au vu de l'évolution récente observée des espérances de vie. Les projections du modèle LIVIA utilisée à titre de comparaison sont elles-aussi prises avec le scénario de mortalité haute (données téléchargées depuis l'application interactive en ligne : https://drees.shinyapps.io/projection-pa/)
+
+On représente d'abord les évolutions des prévalences (lissées) à chaque âge fin par rapport à 2010. dans le graphique ci-après, les prévalences sont calculées en base 100 = valeur par âge fin en 2010.
+
+```{r graph_evol_prev2010}
+
+evolprev2010 <- prevalApproxlong %>% 
+  filter(grepl("^APA",prestation), 
+         annee>=2010,
+         nbclasses == "6 classes d'âge + lissage",
+         sexe == "Ensemble") %>%
+  select(age,prestation,gir,annee,prevalence)
+
+evolprev2010 <- evolprev2010 %>% filter(annee>2010) %>%
+  left_join(evolprev2010 %>% filter(annee==2010) %>% select(-annee) %>%
+              rename(ref=prevalence),
+            by=c("age","prestation","gir") ) %>%
+  mutate(prevalencerel=round(100*prevalence/ref,1))
+
+ggplotly(
+  graphloc(evolprev2010,
+         aes(x=age,y=prevalencerel,colour=annee,group=annee)) +
+    geom_line() +
+    facet_grid( gir ~ prestation,scale="free") +
+    labs(title = "Prévalences de l'APA lissées par âge fin, <br>en base 100 = valeur à chaque âge en 2010")
+)
+
+
+```
+
+```{r projapa}
+
+anproj <- c(2020,2025,2030,2035,2040)
+
+keephypotheses <- c("trend1019","trend1519") # c("trend1019","trend1519","trend1518")
+
+# == données des projections de population avec hypothèse de mortalité haute
+
+# La plupart des organismes considèrent maintentant comme nouveau scénario "central" celui avec hypothèse de mortalité haute (donc d'EV basse). On reprend donc ce scénario, et on réutilise les programmes du package healthexpectancies pour les extractions
+
+  # -- quotients de mortalité sous l'hypothèse d'EV basse
+
+mortalityMale <- read_excel("data-raw/irsocprojpop1370_FECcentESPbasMIGcent.xls",
+                            sheet = "hyp_mortaliteH",
+                            range = "A5:BG126")
+names(mortalityMale) <- c("age3112", tail(names(mortalityMale),-1) )
+mortalityMale <- mortalityMale %>%
+  pivot_longer(-c("age3112"), names_to = "year", values_to = "qx") %>%
+  mutate(qx = qx/10000 )
+
+mortalityFemale <- read_excel("data-raw/irsocprojpop1370_FECcentESPbasMIGcent.xls",
+                            sheet = "hyp_mortaliteF",
+                            range = "A5:BG126")
+names(mortalityFemale) <- c("age3112", tail(names(mortalityFemale),-1) )
+mortalityFemale <- mortalityFemale %>%
+  pivot_longer(-c("age3112"), names_to = "year", values_to = "qx") %>%
+  mutate(qx = qx/10000 )
+
+FRmortalityForecast2016 <- rbind(
+  mortalityFemale %>% mutate(sex = "female"),
+  mortalityMale %>% mutate(sex = "male")
+  ) %>%
+  mutate(year = as.numeric(year),
+         age3112 = as.numeric(age3112),
+         sex = as.factor(sex))
+
+# transform dataset from age at the end of the year to age at last birthday
+
+LocalInseeMortalityForecast2016 <- rbind(
+  FRmortalityForecast2016 %>% mutate(qx = qx/2, age = age3112),
+  FRmortalityForecast2016 %>% mutate(qx = qx/2, age = pmax(0,age3112-1) )
+  ) %>%
+  select(-age3112) %>%
+  group_by(year,sex,age) %>%
+  summarise_all(sum) %>%
+  ungroup()
+
+  # -- population sous l'hypothèse d'EV basse
+
+popMale <- read_excel("data-raw/irsocprojpop1370_FECcentESPbasMIGcent.xls",
+                            sheet = "populationH",
+                            range = "A5:BG114")
+names(popMale) <- c("age0101", tail(names(popMale),-1) )
+popMale <- popMale %>%
+  pivot_longer(-c("age0101"), names_to = "year", values_to = "popx")
+
+popFemale <- read_excel("data-raw/irsocprojpop1370_FECcentESPbasMIGcent.xls",
+                              sheet = "populationF",
+                              range = "A5:BG114")
+names(popFemale) <- c("age0101", tail(names(popFemale),-1) )
+popFemale <- popFemale %>%
+  pivot_longer(-c("age0101"), names_to = "year", values_to = "popx")
+
+LocalInseePopulationForecast2016 <- rbind(
+  popFemale %>% mutate(sex = "female"),
+  popMale %>% mutate(sex = "male")
+  ) %>%
+  mutate(age0101 = recode(age0101, "108 et +" = "108"),
+         year = as.numeric(year),
+         age0101 = as.numeric(age0101),
+         sex = as.factor(sex))
+
+# == hypothèse des prévalences dans l'APA
+
+prevobs <- prevalApproxlong %>% 
+  filter(prestation %in% c("APAdom","APAetab"),
+         gir %in% c("GIR12","GIR34"),
+         nbclasses == "6 classes d'âge + lissage",
+         sexe == "Ensemble",
+         annee %in% c(2010,2015,2018,2019)) %>%
+  select(age,prestation,gir,annee,prevalence)
+
+prevproj <- prevobs %>%
+  pivot_wider(id_cols=c("annee","prestation","gir","age"),
+              values_from="prevalence",
+              names_from="annee",names_prefix="pix")
+  
+# == projection des prévalences par âge
+
+flogit <- function(x){log(x/(1-x))}
+finvlogit <- function(x){exp(x)/(1+exp(x))}
+
+prevproj <- do.call("bind_rows",
+                    lapply(c(2010:2019,anproj),function(a){prevproj %>% mutate(annee=a)})) %>%
+  mutate(pix2010 = flogit(pix2010),
+         pix2019 = flogit(pix2019),
+         pix2015 = flogit(pix2015),
+         trend1019 = finvlogit(pix2010+(annee-2010)/(2019-2010)*(pix2019-pix2010)),
+         trend1519 = finvlogit(pix2015+(annee-2015)/(2019-2015)*(pix2019-pix2015)),
+         trend1518 = finvlogit(pix2015+(annee-2015)/(2018-2015)*(pix2018-pix2015))) %>%
+  select(-c(pix2010,pix2015,pix2018,pix2019)) %>%
+  pivot_longer(cols=c("trend1019","trend1519","trend1518"),
+               names_to="hypothese",
+               values_to="pix") %>%
+  mutate(pix = pmin(1,pmax(0,pix))) %>%
+  filter(hypothese %in% c(keephypotheses))
+
+# == hypothèses sur les EVAPA
+
+evobs <- evapa %>% 
+  rename(annee = year) %>%
+  filter(prestation %in% c("APAdom","APAetab"),
+         gir %in% c("GIR12","GIR34"),
+         nbclasses == "6 classes d'âge + lissage",
+         sexe == "Ensemble",
+         annee %in% c(2010,2019)) %>%
+  select(age,prestation,gir,annee,DLEx)
+
+evproj <- evobs %>%
+  pivot_wider(id_cols=c("annee","prestation","gir","age"),
+              values_from="DLEx",
+              names_from="annee",names_prefix="DLEx")
+
+evproj <- do.call("bind_rows",
+                    lapply(c(2019,anproj),function(a){evproj %>% mutate(annee=a)})) %>%
+  mutate(EVtrend1019 = DLEx2010+(annee-2010)/(2019-2010)*(DLEx2019-DLEx2010),
+         EVcst2019 = DLEx2019) %>%
+  select(-c(DLEx2010,DLEx2019)) %>%
+  pivot_longer(cols=c("EVtrend1019","EVcst2019"),
+               names_to="hypothese",
+               values_to="DLEx") 
+
+mortalityforecast <- LocalInseeMortalityForecast2016 %>%
+  filter(year %in% c(2019,unique(evproj$annee)) , age>=60) %>%
+  mutate(qx=1-qx) %>%
+  arrange(year,sex,age) %>%
+  group_by(year,sex) %>% mutate(qx=cumprod(qx)) %>% ungroup() %>%
+  select(-sex) %>%
+  group_by(year,age) %>% summarise_all(mean) %>% ungroup()
+mortalityforecast <- mortalityforecast %>%
+  left_join(mortalityforecast %>% rename(lqx=qx) %>% mutate(age=age+1),
+            by = c("year","age")) %>%
+  mutate(qx = ifelse(age==60,1-qx,1-qx/lqx)) %>%
+  select(-lqx)
+
+evproj <- evproj %>%
+  rename(year=annee) %>%
+  left_join(mortalityforecast,
+            by=c("year","age"))  %>%
+  mutate(categ = paste(prestation,gir,hypothese,sep="#")) %>%
+  select(-prestation,-gir,-hypothese)
+
+evproj <- CompleteDFLEtable(evproj) %>%
+  mutate(pix = pmax(0,pmin(1,pix)),
+         prestation = str_extract(categ,"^[^#]+"),
+         gir = str_extract(categ,"[^#]+(?=#[^#]+$)"),
+         hypothese = str_extract(categ,"[^#]+$"),
+         pctDLEx = 100 - pctDFLEx) %>%
+  rename(annee=year) %>%
+  select(names(prevproj),DLEx,pctDLEx)
+
+# == projection des effectifs de bénéficiaires de l'APA
+
+popproj <- LocalInseePopulationForecast2016 %>%
+  mutate(year=year-1,
+         age = pmin(age0101,99)) %>%
+  filter(age >= 60, year %in% c(2010:2019,anproj)) %>%
+  select(-sex,-age0101) %>%
+  rename(annee=year) %>%
+  group_by(annee,age) %>% summarise_all(sum) %>% ungroup()
+
+projage <- left_join( bind_rows(prevproj,evproj), popproj, by=c("annee","age")) %>%
+  mutate(nb=popx*pix)
+
+projtrage <- projage %>%
+  filter(!is.na(nb)) %>% 
+  mutate(tranche.age = cut(age, breaks=c(seq(60,95,5),Inf),
+                           include.lowest = TRUE, right = FALSE )) %>%
+  select(annee,tranche.age,prestation,gir,hypothese,nb) %>%
+  group_by(annee,prestation,tranche.age,gir,hypothese) %>% summarise_all(sum) %>% ungroup()
+
+proj <- projtrage %>%
+  select(annee,prestation,gir,hypothese,nb) %>%
+  group_by(annee,prestation,gir,hypothese) %>% summarise_all(sum) %>% ungroup()
+
+# == fusion avec résultats du modèle LIVIA de la DREES
+
+#livia <- data.frame(
+#  annee = c(2015,2020,2025,2030,2040,2050),
+#  
+#)
+
+# == calcul des EVAPA en projection
+
+tabqmort_proj <- prevproj %>%
+  mutate(lieu = str_extract(prestation,"(?<=APA).+$"),
+         sexe = "Ensemble",
+         categ = paste(prestation,hypothese,gir,lieu,sep="#"),
+         sex = recode(sexe,
+                      "Femmes" = "female",
+                      "Hommes" = "male",
+                      "Ensemble" = "all") %>% as.factor()) %>%
+  select(annee,age,categ,sex,pix) %>%
+  rename(year = annee) %>%
+  left_join(
+    mortalityforecast  %>% mutate(sex="all"),
+    by = c("year","age","sex")
+  ) %>%
+  filter(!is.na(qx),!is.na(pix)) 
+
+evapa_proj <- CompleteDFLEtable(tabqmort_proj) %>%
+  mutate(prestation = str_extract(categ,"^[^#]+"),
+         hypothese = str_extract(categ,"[^#]+(?=#[^#]+#[^#]+$)"),
+         gir = str_extract(categ,"[^#]+(?=#[^#]+$)"),
+         lieu = str_extract(categ,"[^#]+$")) %>%
+  mutate(sexe = recode(sex,
+                      "female" = "Femmes",
+                      "male" = "Hommes",
+                      "all" = "Ensemble") %>% as.character())
+
+evapa60_proj <- evapa_proj %>% 
+  filter(age==60) %>%
+  mutate(pctDLEx = 100 - pctDFLEx) %>%
+  rename(annee = year) %>%
+  select(annee,hypothese,gir,lieu,DLEx,pctDLEx)
+
+evapa60_proj <- bind_rows(
+  evapa60_proj,
+  evapa60_proj %>%
+    select(-gir,-lieu) %>%
+    group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup() %>%
+    mutate(gir="Ensemble",lieu="ensemble")
+)
+
+
+```
+
+## Résultats des projections : prévalences
+
+```{r projapa_graph_preval}
+
+# ==  représentation graphique des résultats
+
+anprojpresente <- c(2020,2030,2040)
+
+# prévalences par âge, en % (par GIR et lieu)
+
+prevgraph <- prevobs %>% 
+  filter(annee %in% c(2010,2019)) %>%
+  rename(pix = prevalence) %>%
+  mutate(hypothese = paste("obs",annee,sep="_")) %>%
+  select(-annee)
+prevgraph <- bind_rows( do.call("bind_rows",
+                                lapply(anproj,function(a){prevgraph %>% mutate(annee=a)})), 
+                       bind_rows(prevproj,evproj) %>% filter(annee %in% c(anproj))  ) %>% 
+  mutate(prestation = paste(prestation,gir,sep="_"))
+
+ggplotly(
+  graphloc(prevgraph %>% filter(annee %in% c(anprojpresente)),
+         aes(x=age,y=pix,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    facet_grid( annee ~ prestation,scale="free") +
+    labs(title = "Prévalences projetées par âge fin, selon l'année et l'hypothèse de projection")
+)
+
+# prévalences par âge, en base 100 = 2010 (par GIR et lieu)
+
+ggplotly(
+  graphloc(prevgraph  %>% 
+           filter(annee %in% c(anprojpresente)) %>% 
+           filter(hypothese != "obs_2010")  %>%
+           left_join(prevgraph %>% filter(hypothese == "obs_2010") %>% 
+                       select(-hypothese) %>%
+                       rename(ref=pix),
+                     by =c("prestation","age","gir","annee")) %>%
+           mutate(pix=round(100*pix/ref,1)),
+         aes(x=age,y=pix,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    facet_grid( annee ~ prestation,scale="free") +
+    labs(title = "Prévalences projetées par âge fin, selon l'année et l'hypothèse de projection, en base 100 = valeur à chaque âge en 2010")
+)
+
+# prévalences par âge, tous GIR et tous lieux confondus
+
+prevgraphtot <- prevgraph %>%
+  select(-gir,-prestation,-DLEx) %>%
+  group_by(annee,age,hypothese) %>% summarise_all(sum) %>% ungroup()
+
+prevgraphtot <- bind_rows(
+  prevgraphtot %>%
+    mutate(type= "en niveau"),
+  prevgraphtot  %>% 
+    filter(annee %in% c(anprojpresente)) %>% 
+    filter(hypothese != "obs_2010")  %>%
+    left_join(prevgraphtot %>% filter(hypothese == "obs_2010") %>% 
+                select(-hypothese) %>%
+                rename(ref=pix),
+              by =c("age","annee")) %>%
+    mutate(pix=round(100*pix/ref,1),
+           type = "en base 100 = 2010")
+)
+
+ggplotly(
+  graphloc(prevgraphtot %>% filter(annee %in% c(anprojpresente)),
+         aes(x=age,y=pix,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    facet_grid(type ~ annee,scale="free") +
+    labs(title = "Prévalences projetées par âge fin, tous GIR et lieux confondus, selon l'année et l'hypothèse de projection")
+)
+
+```
+
+## Résultats des projections : nb de bénéficiaires
+
+```{r projapa_graph_nb}
+
+# tableau des effectifs de bénéficiaires de l'APA, observé et en projection
+
+nbapaproj <- bind_rows(
+  # == données observées
+    asdep::ASDEPslbenef %>%
+      filter(Territoire == "TOTAL estimé France entière (hors Mayotte)",Annee>=2010) %>%
+      select(Annee,NbBenefAPA) %>%
+      rename(nb = NbBenefAPA, annee = Annee) %>%
+      mutate(hypothese="observé"),
+    # == projection par extrapolation des tendances d'évolution des prévalences à chaque âge
+    proj %>% select(-prestation,-gir) %>%
+      group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup(),
+    # == projection livia
+    projlivia %>% filter(annee<=max(proj$annee))
+    )
+
+anrefproj <- 2020
+
+delta_nbapaproj <- nbapaproj %>% filter(annee>=anrefproj) %>%
+  left_join(nbapaproj %>% filter(annee == anrefproj) %>% rename(nbref=nb) %>% select(-annee),
+            by = c("hypothese")) %>%
+  mutate(nb = nb-nbref) %>%
+  select(-nbref)
+
+# nb de bénéficiaires de l'APA en projection 
+
+ggplotly(
+  graphloc(nbapaproj,   aes(x=annee,y=nb,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    labs(title = "Nombre projeté de bénéficiaires de l'APA, selon l'hypothèse d'évolution des prévalences à chaque âge")
+)
+
+# nb de bénéficiaires de l'APA en projection : décomposition par lieu et GIR
+
+ggplotly(
+  graphloc(proj  %>% filter(annee %in% c(anprojpresente))  %>%
+             mutate(nb.milliers=round(nb/1000,0)) %>% select(-nb) , 
+         # %>% mutate(prestation = paste(prestation,gir,sep=", ")),
+         aes(x=hypothese,y=nb.milliers,fill=prestation,alpha=gir)) +
+    geom_col() +
+    facet_grid(~ annee , scale="free") +
+    labs(title = "Nombre projeté de bénéficiaires de l'APA, selon l'hypothèse d'évolution des prévalences à chaque âge")
+)
+
+# nb bénéficiaires APA par tranche d'âge
+
+ggplotly(
+  graphloc(projtrage  %>% 
+             filter(annee %in% c(anprojpresente)) %>%
+             select(annee,hypothese,tranche.age,nb) %>%
+             group_by(annee,hypothese,tranche.age) %>% summarise_all(sum) %>% ungroup() %>%
+             mutate(nb.milliers=round(nb/1000,0)) %>% select(-nb), 
+         # %>% mutate(prestation = paste(prestation,gir,sep=", ")),
+         aes(x=tranche.age,y=nb.milliers,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    facet_grid(~ annee , scale="free") +
+    labs(title = "Nombre projeté de bénéficiaires de l'APA par âge, selon l'hypothèse d'évolution des prévalences à chaque âge")
+)
+
+# augmentation du nb de bénéficiaires de l'APA en projection, par rapport à l'année de référence
+
+ggplotly(
+  graphloc(delta_nbapaproj,   aes(x=annee,y=nb,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    labs(title = paste("Augmentation projetée du nombre de bénéficiaires de l'APA à partir de",anrefproj,", selon l'hypothèse d'évolution des prévalences à chaque âge") )
+)
+
+```
+
+## Résultats des projections : EVAPA
+
+```{r projapa_graph_evapa}
+
+# EV dans l'APA à 60 ans en projection 
+
+ggplotly(
+  graphloc(bind_rows(
+    # == données observées
+    evapa60 %>% filter(gir=="Ensemble",lieu=="ensemble",sexe=="Ensemble",annee>=2010,
+                       nbclasses == "6 classes d'âge + lissage") %>%
+      select(annee,DLEx) %>%
+      mutate(hypothese="observé"),
+    # == projection par extrapolation des tendances d'évolution des prévalences à chaque âge
+    evapa60_proj %>% filter(gir=="Ensemble",lieu=="ensemble") %>%
+      select(annee,hypothese,DLEx),
+    # == projection par extrapolation des EVAPA à tous âges
+    evproj %>%
+      filter(age==60) %>%
+      select(-gir,-prestation) %>%
+      group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup() %>%
+      select(annee,hypothese,DLEx)
+    ),
+         aes(x=annee,y=DLEx,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    labs(title = "EV dans l'APA à 60 ans (tous GIR et tous lieux confondus), selon l'hypothèse d'évolution des prévalences à chaque âge")
+)
+
+# EV dans l'APA à 60 ans en projection, en % de l'EV à 60 ans 
+
+ggplotly(
+  graphloc(bind_rows(
+    # == données observées
+    evapa60 %>% filter(gir=="Ensemble",lieu=="ensemble",sexe=="Ensemble",annee>=2010,
+                       nbclasses == "6 classes d'âge + lissage") %>%
+      select(annee,pctDLEx) %>%
+      mutate(hypothese="observé"),
+    # == projection par extrapolation des tendances d'évolution des prévalences à chaque âge
+    evapa60_proj %>% filter(gir=="Ensemble",lieu=="ensemble") %>%
+      select(annee,hypothese,pctDLEx),
+    # == projection par extrapolation des EVAPA à tous âges
+    evproj %>%
+      filter(age==60) %>%
+      select(-gir,-prestation) %>%
+      group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup() %>%
+      select(annee,hypothese,pctDLEx)
+    ),
+         aes(x=annee,y=pctDLEx,colour=hypothese,group=hypothese)) +
+    geom_line() +
+    labs(title = "EV dans l'APA à 60 ans (tous GIR et tous lieux confondus) en % de l'EV totale, selon l'hypothèse d'évolution des prévalences à chaque âge")
+)
+
+```
+
+# Publication *Etudes et résultats* faisant la synthèse de l'analyse
+
+>Cette partie du programme a été déplacée dans un programme à part, intitulé *"Prévalences et EV dans l'APA_projet ER.Rmd"*.
+
+```{r sauve_base_pour_publi}
+# sauvegarde des bases nécessaires pour produire la publication
+
+  # prévalences par âge
+save(prevalences,file="data/pour_ER_prevalences.Rda")
+  # EVAPA à 60 ans
+save(evapa60,file="data/pour_ER_evapa60.Rda")
+  # EVAPA à tous les âges
+save(evapa,file="data/pour_ER_evapa.Rda")
+  # EVAPA à l'âge alternatif présenté (ie 80 ans)
+save(evapa_agealter,file="data/pour_ER_evapa_agealter.Rda")
+  # populations
+save(pop,file="data/pour_ER_pop.Rda")
+  # décomposition de la variation de l'EV APA (effet ET et effet prévalence)
+save(cumdecompevapa_age,file="data/pour_ER_cumdecompevapa_age.Rda")
+  # projections de nombres de bénéficiaires de l'APA
+save(delta_nbapaproj,file="data/pour_ER_delta_nbapaproj.Rda")
+
+
+
+
+```
+
