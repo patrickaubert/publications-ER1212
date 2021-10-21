@@ -1,0 +1,818 @@
+﻿---
+title: "Prévalences et EV dans l'APA en France (publication)"
+author: "Patrick Aubert"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::word_document
+---
+
+
+```{r info, include=FALSE}
+
+# Copyright (C) 2021. Logiciel élaboré par l'État, via la Drees.
+# Nom de l'auteur : Patrick Aubert, Drees.
+# Ce programme informatique a été développé par la Drees. Il permet de produire les tableaux de l'ER n°1212 sur l'espérance de vie dans l'APA, ainsi qu'un certain nombre d'analyses complémentaires.
+# Ce programme a été exécuté le 07/10/2021 avec la version 4.0.5 de R (voir ci-dessous les informations sur la session).
+# Ce programme utilise les données agrégées publiées par la DREES à partir de son enquête annuelle sur l'aide sociale des départements.
+# Bien qu'il n'existe aucune obligation légale à ce sujet, les utilisateurs de ce programme sont invités à signaler à la DREES leurs travaux issus de la réutilisation de ce code, ainsi que les éventuels problèmes ou anomalies qu'ils y rencontreraient, en écrivant à DREES-CODE@sante.gouv.fr
+
+
+# Ce logiciel est régi par la licence "GNU General Public License" GPL-3.0. # https://spdx.org/licenses/GPL-3.0.html#licenseText
+# À cet égard l'attention de l'utilisateur est attirée sur les risques associés au chargement, à l'utilisation, à la modification et/ou au développement et à la reproduction du logiciel par l'utilisateur étant donné sa spécificité de logiciel libre, qui peut le rendre complexe à manipuler et qui le réserve donc à des développeurs et des professionnels avertis possédant des connaissances informatiques approfondies. Les utilisateurs sont donc invités à charger et tester l'adéquation du logiciel à leurs besoins dans des conditions permettant d'assurer la sécurité de leurs systèmes et ou de leurs données et, plus généralement, à l'utiliser et l'exploiter dans les mêmes conditions de sécurité.
+# Le fait que vous puissiez accéder à cet en-tête signifie que vous avez pris connaissance de la licence GPL-3.0, et que vous en avez accepté les termes.
+
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along with this program.If not, see <https://www.gnu.org/licenses/>.
+
+# =======
+#
+# > sessionInfo()
+#
+#R version 4.0.5 (2021-03-31)
+#Platform: x86_64-w64-mingw32/x64 (64-bit)
+#Running under: Windows 10 x64 (build 17134)
+   
+```
+
+    
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+  results='asis', 
+  echo=FALSE, 
+  message=FALSE, 
+  warning=FALSE#,
+  #fig.width = 6,
+  #out.width = "100%",
+  #out.height = "100%"
+)
+
+options(Encoding="UTF-8",
+        decimal.mark = ",",
+        big.mark=" ",
+        scipen=999)
+
+# option pour afficher les décimales avec une virgule plutôt qu'un point
+knitr::knit_hooks$set(inline = function(x) {
+  prettyNum(x, decimal.mark = ",", big.mark=" ")
+})
+
+library(readxl)
+library(openxlsx)
+library(tidyverse)
+library(ggplot2)
+#library(plotly)
+#library(kableExtra)
+library(flextable)
+
+# remotes::install_github("patrickaubert/asdep",ref='main')
+library(asdep)
+
+# fonctions pour les graphiques
+
+source("R/fonctions mise en forme DREES.R")
+graphlocER <- function(...) ggplot_style_ER(...) 
+
+source("R/exporter_tableau_punaise.R", encoding = "UTF-8")
+# RQ : fonction extraite du package rdrees (qui ne semble pas fonctionner avec la version 4.0.0 de R ?)
+
+source("R/fonctions auxiliaires pour étude EVAPA.R", encoding = "UTF-8")
+
+# récupérations de tous les résultats utiles pour la publication
+
+  # prévalences par âge
+load("data/pour_ER_prevalences.Rda")
+  # EVAPA à 60 ans
+load("data/pour_ER_evapa60.Rda")
+  # EVAPA à tous âges
+load("data/pour_ER_evapa.Rda")
+  # EVAPA à l'âge alternatif présenté (ie 80 ans)
+load("data/pour_ER_evapa_agealter.Rda")
+  # populations
+load("data/pour_ER_pop.Rda")
+  # décomposition de la variation de l'EV APA (effet ET et effet prévalence)
+load("data/pour_ER_cumdecompevapa_age.Rda")
+  # projections de nombres de bénéficiaires de l'APA
+load("data/pour_ER_delta_nbapaproj.Rda")
+
+  # paramètres complémentaires (à vérifier dans le programme "analyse complète")
+agealter <- 80
+anrefproj <- 2020
+
+```
+
+>*Avertissement* : ce programme a pour seul objet de produire un projet de publication dans la collection *Etudes et résultats* de la DREES. Le programme intitulé *"Prévalences et EV dans l'APA_analyse complète"* détaille toute l'analyse et construit toutes les tables de données ; il doit donc avoir été lancé au préalable.
+
+## Illustrations et export d'un fichier Excel
+
+Dans cette dernière section, on construit quelques illustrations synthétiques destinées à être reprises dans une publication courte présentant l'indicateur.
+
+- graphique 1 : écart 2019/2010 pour les prévalences aux divers âges (par GIR regroupé*lieu)
+- tableau 1 : EVAPA en années en 2019, par gir, lieu, sexe (8classes) [ou 2018 ?]
+- graphique 2 : évolution 2010-2019 en base 100 = 2010, par GIR regroupé, lieu (6classes+lissage)
+
+- tableau complémentaire A : prévalences observées par tranche d'âge
+- tableau complémentaire B : EVAPA 2016-2019 à divers âges, en 8 classes d'âge [en années et %ev, pour tous les croisements GIR*lieu]
+- tableau complémentaire C : EVAPA 2010-2019 à 60 ans, à méthodologie constante (=6 classes d'âge lissées) [même croisements]
+- tableau complémentaire D : décomposition de la variation de l'EVAPA par type d'effet, lieu et tranche d'âge
+
+
+```{r illustrations}
+
+# == graphique 1 (évolution des prévalences 2019 par rapport à 2010)
+
+graph1_ <- prevalences %>%
+  filter(annee %in% c(2010,2019),
+         grepl("^APA",prestation),
+         gir %in% c("GIR12","GIR34"),
+         lieu %in% c("domicile","établissement")) %>%
+  mutate(age = ifelse(age %in% c("[60,65)","[65,70)","[70,75)"),"[60,75)",age)) %>%
+  select(gir,lieu,annee,age,nb,pop) %>%
+  group_by(gir,lieu,annee,age) %>% summarise_all(sum) %>% ungroup() %>%
+  mutate(prevalence = nb / pop) %>%
+  select(gir,lieu,annee,age,prevalence)
+
+graph1 <- graph1_ %>% filter(annee==2019) %>% select(-annee) %>%
+  full_join(graph1_ %>% filter(annee==2010) %>% rename(ref=prevalence) %>% select(-annee),
+            by = c("gir","lieu","age")) %>%
+  mutate(evol_prevalence = round(100*(prevalence/ref-1),0),
+         gir = recode(gir, "Ensemble"="Tous GIR", "GIR12"="GIRans1 et 2", "GIR34" = "GIR ans3 et 4")) %>%
+  select(-prevalence,-ref) %>%
+  filter(!is.na(evol_prevalence))
+
+# == tableau 1 (EVAPA à 60 ans en 2019)
+
+tab1 <- bind_rows(
+  evapa60 %>%
+    filter(annee == 2019, nbclasses == "8 classes d'âge", grepl("^APA",prestation)),
+  evapa60 %>%
+    filter(annee == 2019, nbclasses == "pano AAS + lissage", grepl("^APA",prestation),
+           sexe != "Ensemble", gir == "Ensemble") %>%
+    mutate(gir = paste(sexe,"") %>% trimws() )) %>%
+  select(gir,lieu,DLEx,pctDLEx) %>%
+  pivot_longer(cols=c("DLEx","pctDLEx"),names_to="indic",values_to="val") %>%
+  mutate(val = round(val,1),
+         lieu = factor(lieu, levels=c("ensemble","domicile","établissement")),
+         gir = factor(gir, levels=c("Ensemble","GIR12","GIR1","GIR2",
+                                    "GIR34","GIR3","GIR4",
+                                    "Femmes",
+                                    "Hommes")) ) %>%
+  arrange(gir,indic,lieu) %>%
+  mutate(gir = as.character(gir) %>% 
+           recode("GIR12" = "GIR 1 et 2, dont :", "GIR34" = "GIR 3 et 4, dont :"),
+         gir = ifelse(grepl("GIR[1234]$",gir),paste0("   ",gir),gir),
+         indic = as.character(indic) %>% 
+           recode("DLEx" = "En années", "pctDLEx"="En % de l'EV à 60 ans"),
+         indic = paste(indic,lieu,sep = " : ")) %>%
+  select(gir,indic,val) %>%
+  pivot_wider(id_cols="gir",names_from="indic",values_from="val") %>%
+  data.frame()
+
+# == graphique 2 (évolution EV et EVAPA à 60 ans depuis 2010)
+
+graph2_ <- evapa60 %>%
+  filter(nbclasses == "6 classes d'âge + lissage", 
+         grepl("^APA",prestation) , 
+         gir %in% c("Ensemble","GIR12","GIR34"),
+         annee >= 2010) %>%
+  select(annee,gir,lieu,DLEx,ex)
+
+graph2 <- graph2_ %>%
+  left_join(graph2_ %>% filter(annee == 2010) %>% select(-annee) %>% rename(refdle=DLEx,refe=ex),
+            by=c("gir","lieu")) %>%
+  mutate(evol_dle = round(100*(DLEx/refdle-1),1),
+         evol_ev = round(100*(ex/refe-1),1),
+         lieu=factor(lieu,levels=c("ensemble","domicile","établissement")),
+         gir = recode(gir, "Ensemble"="Tous GIR", "GIR12"="GIR 1 et 2", "GIR34" = "GIR 3 et 4"),
+         annee = as.integer(annee)) %>%
+  select(-refdle,-DLEx,-refe,-ex)
+
+graph2 <- graph2 %>%
+  pivot_longer(cols=c("evol_dle","evol_ev"),names_to="type",values_to="evol") %>%
+  filter((type=="evol_dle") | (gir == "Tous GIR")) %>%
+  mutate(gir = ifelse(type=="evol_ev","Espérance de vie totale",gir)) %>%
+  select(-type) %>%
+  arrange(lieu,gir,annee)
+
+graphUneWeb <- graph2 %>% filter(lieu=="ensemble") %>% select(-lieu)
+           
+
+# == graphique 3 : nb de bénéficiaires de l'APA selon diverses hypothèses : LIVIA intermédiaire, LIVIA optimiste, prolong 2010-2019, prolong tendance 2015-2018 ou 2019
+
+#graph3 <- bind_rows(
+#  proj %>% select(-prestation,-gir) %>%
+#      group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup(),
+#    projlivia %>% filter(annee<=max(proj$annee)) 
+#  ) %>%
+#  filter(annee %in% c(2025,2030,2035,2040), grepl("^livia",hypothese) | #(hypothese=="trend1019")) %>%
+#  mutate(hypothese = factor(hypothese,                            #levels=c("trend1019","livia_optimiste","livia_intermediaire","livia_pessimiste"))) %>%
+#  arrange(hypothese) %>%
+#  mutate(nb.milliers = 10*round(nb/10000,0),
+#         hypothese = as.character(hypothese),
+#         hypothese = ifelse(grepl("^livia",hypothese),
+#                            paste("Modèle LIVIA, #hypothèse",str_extract(hypothese,"(?<=_).*$")),
+#                            "Extrapolation de la tendance 2010-2019")
+#         ) %>%
+#  select(-nb) %>%
+#  pivot_wider(id_cols="hypothese",names_from="annee",values_from="nb.milliers")
+
+# == tableau complémentaire A : prévalences observées par tranche d'âge
+
+tabcomplA <- prevalences %>%
+  filter(grepl("^APA",prestation)) %>%
+  mutate(prevalence = round(100*prevalence,1),
+         nb.milliers = round(nb/1000,0) ) %>%
+  select(lieu,gir,annee,age,nb.milliers,prevalence) %>%
+  arrange(lieu,gir,annee,age) %>%
+  mutate(age = age %>% trage_to_text() ) 
+
+nomindics_tabA <- list(
+  "lieu" = "Lieu de résidence",
+  "annee" = "Année",
+  "gir" = "GIR",
+  "age" = "Âge",
+  "prestation" = "Prestation",
+  "nb.milliers" = "Effectifs de bénéficiaires (en milliers)",
+  "prevalence" = "Prévalence dans la population de la tranche d'âge (en %)"
+)
+
+# == tableau complémentaire B : EVAPA 2016-2019, en 8 classes d'âge [en années et %ev, pour tous les croisements GIR*lieu]
+
+#tabcomplB <- evapa60 %>%
+#  filter(nbclasses == "8 classes d'âge", grepl("^APA",prestation)) %>%
+#  mutate(DLEx=round(DLEx,1),
+#         pctDLEx=round(pctDLEx,1)) %>%
+#  select(lieu,gir,annee,DLEx,pctDLEx) %>%
+#  arrange(lieu,gir,annee)
+
+tabcomplB <- evapa %>%
+  rename(annee=year) %>%
+  filter(nbclasses == "8 classes d'âge", grepl("^APA",prestation),
+         age %in% seq(60,80,5)) %>%
+  mutate(DLEx=round(DLEx,1),
+         pctDLEx=round(pctDLEx,1)) %>%
+  select(lieu,gir,annee,age,DLEx,pctDLEx) %>%
+  arrange(lieu,gir,annee,age) 
+
+nomindics_tabB <- list(
+  "lieu" = "Lieu de résidence",
+  "annee" = "Année",
+  "gir" = "GIR",
+  "age" = "Âge",
+  "DLEx" = "Espérance de vie dans l'APA (en années)",
+  "pctDLEx" = "Espérance de vie dans l'APA (en % de l'EV totale)"
+)
+
+# == tableau complémentaire C : EVAPA 2010-2019, à méthodologie constante (=6 classes d'âge lissées) [même croisements]
+
+tabcomplC <- evapa60 %>%
+  filter(nbclasses == "6 classes d'âge + lissage", grepl("^APA",prestation),annee>=2010) %>%
+  select(lieu,gir,annee,DLEx,pctDLEx) %>%
+  arrange(lieu,gir,annee)
+
+tabcomplC <- tabcomplC %>%
+  left_join(tabcomplC %>%
+              filter(annee==2010) %>%
+              select(-annee) %>%
+              rename(refDLEx=DLEx,refpctDLEx=pctDLEx),
+            by=c("lieu","gir")) %>%
+  mutate(evolDLEx = round(100*(DLEx/refDLEx-1),1),
+         evolpctDLEx = round(100*(pctDLEx/refpctDLEx-1),1),
+         DLEx=round(DLEx,1),
+         pctDLEx=round(pctDLEx,1)  ) %>%
+  select(-refDLEx,-refpctDLEx)
+
+nomindics_tabC <- list(
+  "lieu" = "Lieu de résidence",
+  "annee" = "Année",
+  "gir" = "GIR",
+  "age" = "Âge",
+  "DLEx" = "Espérance de vie dans l'APA à 60 ans (en années)",
+  "pctDLEx" = "Espérance de vie dans l'APA à 60 ans (en % de l'EV totale à 60 ans)",
+  "evolDLEx" = "Evolution depuis 2010 de l'espérance de vie dans l'APA à 60 ans (en %)",
+  "evolpctDLEx" = "Evolution depuis 2010 de la part de l'espérance de vie dans l'APA dans l'espérance de vie totale à 60 ans (en %)"
+)
+
+# == tableau complémentaire D : EVAPA estimée à divers âges
+
+tabcomplD <- cumdecompevapa_age %>% 
+  filter(annee==2019,gir=="Ensemble",lieu=="ensemble") %>%
+  select(-annee,-gir,-prestation,-lieu)
+
+tabcomplD <- bind_rows(
+  tabcomplD,
+  tabcomplD %>% select(-trAge) %>% summarise_all(sum) %>% mutate(trAge="Ensemble")
+) %>%
+  mutate_if(is.numeric,function(x){round(x,1)}) %>% 
+  mutate(trAge = ifelse(grepl("\\[",trAge),trage_to_text(trAge),trAge ) )
+
+nomindics_tabD <- list(
+  "trAge" = "Tranche d'âge",
+  "d_DLEx" = "Variation de l'EVAPA à 60 ans (en mois)",
+  "d_DLEx_prevconst" = "Contribution de la hausse de l'espérance de vie (en mois)",
+  "d_DLEx_mortconst" = "Contribution de la baisse des prévalences de l'APA (en mois)"
+)
+
+# == tableau complémentaire E : projections sous diverses hypothèses, en 2025, 2030 et 2035
+
+#tabcomplE <- bind_rows(
+#  proj %>% select(-prestation,-gir) %>%
+#      group_by(annee,hypothese) %>% summarise_all(sum) %>% ungroup(),
+#    projlivia %>% filter(annee<=max(proj$annee)) 
+#  )
+
+```
+
+On extrait aussi tous les chiffres qui seront cités dans le corps du texte.
+
+
+```{r chiffres_commentes}
+
+# paragraphe introductif
+
+nbapa <- asdep::ASDEPslbenef %>% 
+  filter(Annee %in% c(2010,2019),Territoire=="TOTAL estimé France entière (hors Mayotte)") %>%
+  select(Annee,NbBenefAPA) %>%
+  pivot_wider(values_from="NbBenefAPA",names_from="Annee",names_prefix="nbbenefapa")
+
+nbpop <- pop %>%
+  filter(sexe=="Ensemble",annee %in% c(2010,2019)) %>%
+  select(annee,pop) %>%
+  group_by(annee) %>% summarise_all(sum) %>% ungroup() %>%
+  pivot_wider(values_from="pop",names_from="annee",names_prefix="pop")
+
+nbapa2019million <- round(nbapa$nbbenefapa2019/1000000,2)
+
+evolnbapa1019 <- round(100*(nbapa$nbbenefapa2019/nbapa$nbbenefapa2010-1),1)
+
+partapa <- round(100*nbapa/nbpop,3)
+
+# paragraphe prévalences par age
+
+prev2019 <- prevalences %>%
+  filter(annee==2019,prestation=="APA",gir=="Ensemble",lieu=="ensemble") %>%
+  mutate(prevalence = round(100*prevalence,0)) %>%
+  select(age,prevalence)
+
+
+# paragraphe EVAPA en 2019
+
+# -> dans le corps du texte pour l'EVAPA à 60 ans
+
+tab_evapa_agealter <- evapa_agealter %>%
+  filter(annee==max(graph2$annee),
+         grepl("^APA",prestation),
+         nbclasses=="6 classes d'âge + lissage",
+         sexe=="Ensemble",
+         gir %in% c("GIR12","GIR34","Ensemble"),
+         !((gir %in% c("GIR12","GIR34")) & (lieu %in% c("domicile","établissement")))) %>%
+  mutate(cat = case_when((gir %in% c("GIR12","GIR34")) ~ gir,
+                         (lieu %in% c("domicile","établissement")) ~ lieu,
+                         TRUE ~ "Ensemble")) %>%
+  select(cat,DLEx,ex,pctDLEx) %>%
+  mutate_at(c("DLEx","ex","pctDLEx"), function(x){round(x,1)})
+
+# paragraphe évol EVAPA 2010-2019
+
+ev60_2019 <- (graph2_ %>% select(annee,ex) %>% distinct() %>% filter(annee==max(graph2$annee)))$ex %>% round(1)
+
+dim1O19_evapa <- (graph2 %>% filter(annee==2019,gir=="Tous GIR",lieu=="ensemble"))$evol
+fdim1019evapa <- function(g="Tous GIR",l="ensemble") {
+  (graph2 %>% filter(annee==2019,gir==g,lieu==l))$evol
+}
+dimgir1 <- round(100*(
+  (evapa60 %>% filter(nbclasses == "6 classes d'âge + lissage", gir=="GIR1", lieu=="ensemble",annee==2019))$DLEx /
+  (evapa60 %>% filter(nbclasses == "6 classes d'âge + lissage", gir=="GIR1", lieu=="ensemble",annee==2010))$DLEx    -1),1)
+
+tempcalc <- graph2_ %>%  filter(gir=="Ensemble",lieu=="ensemble",annee %in% c(2010,2019))
+dim1O19_evapa_mois <- round(12*(tempcalc$DLEx[2] - tempcalc$DLEx[1]),1)
+aug1O19_ev_mois <- round(12*(tempcalc$ex[2] - tempcalc$ex[1]),1)
+
+
+var1O19_ev <- (graph2 %>% filter(annee==2019,gir=="Espérance de vie totale",lieu=="ensemble"))$evol
+
+partapa2010 <- round(100*(
+  (graph2_ %>% filter(annee==2010,gir=="Ensemble",lieu=="ensemble"))$DLEx /
+    (graph2_ %>% filter(annee==2010,gir=="Ensemble",lieu=="ensemble"))$ex),1)
+partapa2019 <- round(100*(
+  (graph2_ %>% filter(annee==2019,gir=="Ensemble",lieu=="ensemble"))$DLEx /
+    (graph2_ %>% filter(annee==2019,gir=="Ensemble",lieu=="ensemble"))$ex),1)
+dim1019_partevapa <- round(100*(partapa2019/partapa2010-1),1)
+
+# paragraphe décomposition évolution par âge
+
+decomp_cum <- cumdecompevapa_age %>% filter(annee==2019,gir=="Ensemble",lieu=="ensemble")
+
+effet_ev <-  sum(decomp_cum$d_DLEx_prevconst) %>% round(1)
+effet_preval <-  sum(decomp_cum$d_DLEx_mortconst) %>% round(1)
+
+
+# paragraphe projection
+
+deltanbapa2030 <- function(sc) {
+  (delta_nbapaproj %>% filter(annee==2030,hypothese==sc))$nb %>% round(-3)
+}
+
+
+```
+
+On préparer enfin les métadonnées des illustrations (lecture, champ, source, etc) et on met en forme ces illustrations pour exportation dans un fichier Excel/
+
+
+```{r export_illustrations}
+
+# ====== Métadonnées
+
+#== graphique UneWeb
+
+graphuneweb_meta <- list(
+  "titre" = "Graphique de Une : Taux d'évolution par rapport à 2010 de l'espérance de vie à 60 ans et de l'espérance de vie dans l'APA (en %)",
+  "note" = "La courbe correspondant à l'espérance de vie totale est identique pour les trois sous-graphiques ; elle correspond à l'espérance de vie tous lieux de résidence confondus.",
+  "lecture" = paste("L'espérance de vie dans l'APA (tous GIR confondus) a diminué de",(graphUneWeb %>% filter(annee=="2019",gir == "Tous GIR"))$evol %>% abs(),"% entre 2010 et 2019."),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2010-2019, DREES ; bilan démographique, Insee"
+)
+
+#== Tableau 1
+
+tab1_meta <- list(
+  "titre" = "Tableau 1 : Espérance de vie dans l'APA fin 2019",
+  "note" = "L'espérance de vie dans l'APA est calculée ici à partir des prévalences de l'APA moyennes par tranches d'âge, avec un découpage en 8 tranches d'âge (voir encadré méthodologique).",
+  "lecture" = paste("En moyenne fin 2019, une personne de 60 ans peut espérer vivre",tab1[1,2],"années en tant que bénéficiaire de l'allocation personnalisée d'autonomie (APA), soit",tab1[1,5]," % de son espérance de vie totale à cet âge."),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "DREES, enquête Aide sociale 2019, DREES ; Insee, bilan démographique"
+)
+
+#== graphique 1
+
+graph1_meta <- list(
+  "titre" = "Graphique 1 : Taux d'évolution entre 2010 et 2019 des prévalences dans l'APA par tranche d'âge (en %)",
+  "note" = NULL,
+  "lecture" = paste("La prévalence de l'APA (c'est-à-dire la part des bénéficiaires de l'APA parmi l'ensemble des personnes de la tranche d'âge) a baissé de",(graph1 %>% filter(age=="[80,85)",gir == "GIR 3 et 4",lieu=="domicile"))$evol_prevalence %>% abs()," % entre 2010 et 2019 parmi les personnes de 80 à 84 ans en GIR 3 et 4 à domicile"),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2010-2019, DREES ; bilan démographique, Insee"
+)
+
+ #== graphique 2
+
+graph2_meta <- list(
+  "titre" = "Graphique 2 : Taux d'évolution de l'espérance de vie à 60 ans et de l'espérance de vie dans l'APA (par rapport à 2010, en %)",
+  "note" = "La courbe correspondant à l'espérance de vie totale est identique sur les trois sous-graphiques. Elle couvre l'ensemble de la durée de vie quel que soit le lieu de résidence (domicile ou établissement).",
+  "lecture" = paste("L'espérance de vie dans l'APA (tous GIR confondus) a diminué de",(graphUneWeb %>% filter(annee=="2019",gir == "Tous GIR"))$evol %>% abs(),"% entre 2010 et 2019."),
+  "champ" = "France entière",
+  "sources" = "enquête Aide sociale 2010-2019, DREES ; bilan démographique, Insee"
+)
+
+# == tableau complémentaire A : prévalences observées par tranche d'âge
+
+tabcomplA_meta <- list(
+  "titre" = "Tableau A : Nombre de bénéficiaires (en milliers) et prévalence (en %) de l'APA par tranche d'âge, lieu de résidence et catégorie de GIR",
+  "note" = NULL,
+  "lecture" = paste("Fin 2019,",(tabcomplA %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile",age=="[80,85)"))$nb.milliers,"000 personnes de 80 à 84 ans sont bénéficiaires de l'APA à domicile en GIR 4, soit",(tabcomplA %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile",age=="[80,85)"))$prevalence,"% de l'ensemble des personnes de cette tranche d'âge"),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2002-2019, DREES"
+)
+
+# == tableau complémentaire B : EVAPA 2016-2019, en 8 classes d'âge [en années et %ev, pour tous les croisements GIR*lieu]
+
+tabcomplB_meta <- list(
+  "titre" = "Tableau B : Espérance de vie dans l'APA à divers âges, en années et en % de l'espérance de vie totale, entre 2016 et 2019",
+  "note" = "L'espérance de vie dans l'APA est calculée ici à partir des prévalences de l'APA moyennes par tranches d'âge, avec un découpage en 8 tranches d'âge (voir encadré méthodologique). Cette méthodologie est analogue à celle du tableau 1.",
+  "lecture" = paste("En moyenne fin 2019, une personne de 65 ans peut espérer vivre",(tabcomplB %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile",age==65))[,4],"années en tant que bénéficiaire de l'APA en GIR 4 à domicile, soit",(tabcomplB %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile",age==65))[,5],"% de son espérance de vie totale à cet âge."),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2016-2019, DREES ; bilan démographique, Insee"
+)
+
+# == tableau complémentaire C : EVAPA 2010-2019, à méthodologie constante (=6 classes d'âge lissées) [même croisements]
+
+tabcomplC_meta <- list(
+  "titre" = "Tableau C : Espérance de vie dans l'APA à 60 ans, en années et en % de l'espérance de vie totale, entre 2010 et 2019",
+  "note" = "L'espérance de vie dans l'APA est calculée ici en fonction de prévalences de l'APA à chaque âge, calculées par lissage des prévalences moyennes par tranches d'âge avec un découpage en 6 tranches d'âge (voir encadré méthodologique). La méthodologie est analogue à celle du graphique 2. Elle est retenue ici afin de raisonner à méthodologie constante sur toute la période 2010-2019",
+  "lecture" = paste("En moyenne fin 2019, une personne de 60 ans peut espérer vivre",(tabcomplC %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile"))[,4],"années en tant que bénéficiaire de l'APA en GIR 4 à domicile, soit",(tabcomplC %>% filter(annee=="2019",gir == "GIR4",lieu=="domicile"))[,5],"% de son espérance de vie totale à cet âge."),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2010-2019, DREES ; bilan démographique, Insee"
+)
+
+# == tableau complémentaire D : décomposition de la variation 2010-2019 de l'espérance de vie dans l'APA
+
+tabcomplD_meta <- list(
+  "titre" = "Tableau D : Contributions de la baisse de la mortalité et de la baisse des prévalences dans l'APA à la variation de l'espérance de vie dans l'APA à 60 ans (cumul entre 2010 et 2019)",
+  "note" = NULL,
+  "lecture" = paste("Entre 2010 et 2019, la baisse de la mortalité (ie la hausse de l'espérance de vie) après 85 ans contribue à augmenter l'espérance de vie dans l'APA de",(tabcomplD %>% filter(trAge=="[85,Inf]"))$d_DLEx_prevconst,"mois, tandis que la diminution des prévalences dans l'APA au sein de cette tranche d'âge contribue à la faire varier de",(tabcomplD %>% filter(trAge=="[85,Inf]"))$d_DLEx_mortconst,"mois."),
+  "champ" = "France entière (hors Mayotte)",
+  "sources" = "enquête Aide sociale 2010-2019, DREES ; bilan démographique, Insee"
+)
+
+# ====== Export des données dans Excel
+
+if (TRUE) {
+  #== graphique UneWeb
+
+graphUneWeb %>% 
+  pivot_wider(id_cols="annee",values_from="evol",names_from="gir") %>%
+  export_tableau(
+  onglet = "Graphique Une web",
+  fichier_source = NULL, 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=graphuneweb_meta) 
+
+#== Tableau 1
+
+tab1 %>%
+  export_tableau(
+  onglet = "Tableau 1",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 0,
+  list_meta = tab1_meta) 
+
+#== graphique 1
+
+graph1 %>% 
+  pivot_wider(id_cols=c("lieu","age"),
+              values_from="evol_prevalence",names_from="gir") %>%
+  mutate(age = age %>% trage_to_text() ) %>%
+  export_tableau(
+  onglet = "Graphique 1",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 0,
+  list_meta = graph1_meta) 
+
+# == graphique 2
+
+graph2 %>% 
+  pivot_wider(id_cols=c("lieu","annee"),values_from="evol",names_from="gir") %>%
+  export_tableau(
+  onglet = "Graphique 2",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=graph2_meta)  
+
+# == tableau complémentaire A : prévalences observées par tranche d'âge
+
+names(tabcomplA) <- recode(names(tabcomplA) , !!! nomindics_tabA)
+
+tabcomplA %>%
+  export_tableau(
+  onglet = "Tableau A",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=tabcomplA_meta)  
+
+# == tableau complémentaire B : EVAPA 2016-2019, en 8 classes d'âge [en années et %ev, pour tous les croisements GIR*lieu]
+
+names(tabcomplB) <- recode(names(tabcomplB) , !!! nomindics_tabB)
+
+tabcomplB %>%
+  export_tableau(
+  onglet = "Tableau B",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=tabcomplB_meta)  
+
+
+# == tableau complémentaire C : EVAPA 2010-2019, à méthodologie constante (=6 classes d'âge lissées) [même croisements]
+
+names(tabcomplC) <- recode(names(tabcomplC) , !!! nomindics_tabC)
+
+tabcomplC %>%
+  export_tableau(
+  onglet = "Tableau C",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=tabcomplC_meta)  
+
+# == tableau complémentaire D : décomposition de la variation 2010-2019 de l'espérance de vie dans l'APA
+
+names(tabcomplD) <- recode(names(tabcomplD) , !!! nomindics_tabD)
+
+tabcomplD %>%
+  export_tableau(
+  onglet = "Tableau D",
+  fichier_source = "ER_EVAPA_P_Aubert_2021.xlsx", 
+  fichier_destination = "ER_EVAPA_P_Aubert_2021.xlsx",
+  nombre_decimales_voulues = 1,
+  list_meta=tabcomplD_meta)  
+
+# ----------
+# création complémentaire de fichiers data.drees (ayant vocation à être actualisés chaque année ensuite)
+
+# == data.drees prévalences
+
+datadrees_prevalence <- prevalences %>%
+  mutate(prevalence = round(100*prevalence,1),
+         nb.milliers = round(nb/1000,0) ) %>%
+  mutate(prestation = recode(prestation, "APAdom" = "APA", "APAetab" = "APA", "AidesMenag" = "Aides ménagères")) %>%
+  select(lieu,gir,annee,age,prestation,nb.milliers,prevalence) %>%
+  arrange(prestation,lieu,gir,annee,age)
+
+names(datadrees_prevalence) <- recode(names(datadrees_prevalence) , !!! nomindics_tabA)
+
+write.csv2(datadrees_prevalence, "DataDREES_prevalences_prestations_PA.csv",fileEncoding = "UTF-8",row.names=FALSE)
+
+# == data.drees EVAPA
+
+names(tabcomplC) <- names(tabcomplC) %>% str_replace_all(" à 60 ans","")
+
+datadrees_evapa <- bind_rows(
+  tabcomplB %>% mutate(Méthode = "À partir des prévalences en 8 tranches d'âge (disponible depuis 2016)"),
+  tabcomplC %>% mutate(Méthode = "À partir des prévalences en 6 tranches d'âge (disponible depuis 2010)", Âge = 60)
+)
+
+write.csv2(datadrees_evapa, "DataDREES_evapa.csv",fileEncoding = "UTF-8",row.names=FALSE)
+
+
+}
+
+```
+
+## Titre
+
+**Allocation personnalisée d’autonomie : la part de l’espérance de vie passée en tant que bénéficiaire diminue depuis 2010**
+
+## Métadonnées pour la publication
+
+Thème : grand âge & autonomie
+
+Sous-Thème : prestation de soutien à l'autonomie et à l'hébergement
+
+Rubrique : Allocation personnalisée d'autonomie (APA)
+
+Mots-clés : Perte d'autonomie ; Personne âgée ; Allocation personnalisée d'autonomie (APA)
+
+Graphique de Une : extrait du graphique 2 
+
+## Chapeau
+
+**Fin `r max(graph2$annee)`, une personne de 60 ans a une espérance de vie de `r ev60_2019` années parmi lesquelles, en moyenne, `r tab1[1,2]` années (soit `r tab1[1,5] %>% str_replace("\\.",",")` %) sont passées en tant que bénéficiaire de l'allocation personnalisée d'autonomie (APA). L'espérance de vie passée dans l'APA est plus longue dans un état de dépendance modérée (`r tab1[5,2]` année en GIR 3 ou 4) que sévère (`r tab1[2,2]` année en GIR 1 ou 2). Elle est aussi plus élevée en tant que bénéficiaire de l'APA à domicile (`r tab1[1,3]` année contre`r tab1[1,4]` année en établissement).**
+
+**Bien que l'espérance de vie totale à 60 ans augmente, l'espérance de vie dans l'APA diminue régulièrement depuis 2010 (`r dim1O19_evapa` %), traduisant un recours à cette prestation en baisse à âge donné. La part de la durée de vie après 60 ans passée en tant que bénéficiaire de l'APA passe ainsi de `r partapa2010` % fin 2010 à `r partapa2019` % fin 2019. La baisse est plus marquée en GIR 1 et 2 (`r fdim1019evapa(g="GIR 1 et 2")` %) et à domicile (`r fdim1019evapa(l="domicile")` %). Seule l'espérance de vie en GIR 3 et 4 en établissement augmente, au même rythme que l'espérance de vie totale.**
+
+**Si cette tendance se poursuivait, la hausse du nombre de personnes âgées dépendantes pourrait être moins marquée à l'avenir que celle qui est actuellement retenue dans les scénarios de projection.**
+
+## Texte principal
+
+Fin 2019, `r nbapa2019million` million de personnes âgées en France bénéficient de l'allocation personnalisée d'autonomie (APA), d'après l'enquête Aide sociale de la DREES. Cette prestation, gérée par les départements, constitue la principale aide pour les personnes de 60 ans ou plus en perte d'autonomie. Le nombre de bénéficiaires augmente de `r evolnbapa1019` % depuis 2010. Pour autant, cette hausse ne traduit pas forcément une augmentation des besoins d'aide à l'autonomie. En effet, cette augmentation résulte en premier lieu du vieillissement de la population, c’est-à-dire du nombre croissant de personnes âgées du fait des gains d’espérance de vie et de l’avancée en âge des générations du *baby boom*. Pour neutraliser cet effet démographique, il est nécessaire de construire d'autres indicateurs, qui s'appuient sur le nombre de bénéficiaires de l'APA *à âge donné* et en proportion de la population à chaque âge.
+
+**La part de bénéficiaires de l’APA en forte baisse autour de 80 ans par rapport à 2010**
+
+Le recours à l'APA concerne avant tout les personnes les plus âgées ; la proportion de bénéficiaires de cette prestation au sein d'une classe d'âge donnée, appelée « prévalence » de l'APA, augmente donc fortement avec l'âge (tableau complémentaire A)^[Les tableaux complémentaires sont disponibles avec les données associées à l’étude sur le site internet de la DREES.]. Fin 2019, elle est par exemple de `r (prev2019 %>% filter(age=="[70,75)"))$prevalence` % parmi les personnes de 70 à 74 ans, de `r (prev2019 %>% filter(age=="[80,85)"))$prevalence` % parmi celles de 80 à 84 ans et de `r (prev2019 %>% filter(age=="[90,95)"))$prevalence` % parmi celles de 90 à 94 ans.
+
+Les prévalences de l'APA diminuent sensiblement entre 2010 et 2019, ce qui traduit un moindre recours à cette prestation à âge donné, conséquence notamment d'une amélioration progressive de l'état de santé^[Cette baisse pourrait également résulter d'une modification des pratiques d'attribution de l'APA par les départements ou du comportement de recours par les personnes âgées dépendantes. Néanmoins, le fait que la baisse des prévalences de l'APA soit portée en premier lieu par une amélioration de l'état de santé est corroborée par la hausse concomittante de l'espérance de vie sans incapacité à 60 ans (Deroyon, 2020).] de la population âgée. La baisse est la plus forte autour de 80 ans, que ce soit à domicile ou en établissement, en groupe iso-ressources^[Le groupe iso-ressource, ou GIR, constitue une mesure administrative de degré de dépendance. Les personnes en GIR 1 sont les plus dépendantes tandis que celles en GIR 6 sont les plus autonomes. Le classement en GIR 1 à 4 ouvre le droit à l'APA.] (GIR) 1 et 2 comme en GIR 3 et 4 (graphique 1). Elle est en revanche plus modérée avant 75 ans et après 85 ans. La baisse apparaît ainsi la plus marquée dans les tranches d'âges où le recours à l'APA commence à concerner une proportion non-négligeable de la population âgée ; cela pourrait donc traduire une « entrée » dans la dépendance qui se ferait progressivement à un âge de plus en plus élevé.
+
+Pour résumer les évolutions de l'espérance de vie et des prévalences de l'APA, tout en neutralisant les effets de structure démographique liés aux différences de taille entre les générations, un indicateur synthétique « d'espérance de vie dans l'APA » peut être calculé (encadré 1). Cet indicateur s'inscrit dans la famille des espérances de vie sans ou en incapacité ; l'écart entre l'espérance de vie totale et l'espérance de vie dans l'APA peut en effet s'interpréter comme une espérance de vie sans incapacité, l'incapacité étant ici mesurée par le fait de devoir recourir à l'APA.
+
+
+```{r graph1}
+
+# présentation en barres
+
+#graphlocly(
+  graphlocER(graph1,aes(y=evol_prevalence,label=paste(evol_prevalence,"%"),
+                       x=age,fill=gir,colour=gir)) +
+    geom_bar(stat="identity", position="dodge") +
+    geom_text(hjust="center",vjust="top",position = position_dodge(width = 1) ) +
+    facet_wrap(~lieu) +
+    labs(title = graph1_meta$titre,
+         x = "Tranche d'âge",
+         y = "Evolution de la prévalence (en %)",
+         caption = texte_notes(graph1_meta))
+#)
+
+# présentation en courbes (abandonnée)
+
+#graphlocly(
+#  graphloc(graph1,aes(y=evol_prevalence,x=age,group=paste(gir,lieu),colour=gir,linetype=lieu)) +
+#    geom_line() +
+#    labs(title = "évolution des prévalences dans l'APA, depuis 2010")
+#)
+```
+
+
+**`r tab1[1,2]` années de bénéfice de l'APA en moyenne**
+
+Fin `r max(graph2$annee)`, une personne de 60 ans peut, compte tenu des conditions de mortalité du moment, espérer vivre encore `r ev60_2019` années. Sur ces dernières, `r tab1[1,2]` seront, en moyenne, passées en tant que bénéficiaire de l'APA, au vu des prévalences de cette allocation observées à cette date^[Les espérances de vie totales et dans l'APA ne dépendent que des conditions observées lors de l'année de référence. Pour les personnes qui ont effectivement 60 ans fin 2019, les valeurs ne tiennent donc pas compte d'éventuelles améliorations ou détériorations des conditions de mortalité ou des prévalences de l'APA après cette date. Il s'agit donc d'un indicateur résumant les conditions du moment, et pas d'une projection de l'espérance de vie.] (tableau 1 et tableaux complémentaires B et C). L'espérance de vie dans l'APA représente ainsi `r tab1[1,5] %>% str_replace("\\.",",")` % de l'espérance de vie totale à 60 ans. 
+
+Cette espérance de vie dans l'APA est plus courte que la durée moyenne de perception de cette prestation par ses bénéficiaires, puisqu'elle tient également compte des personnes qui décèdent sans en avoir bénéficié – qui ont donc une durée de perception nulle^[La méthode tient compte de ces personnes, mais ne permet pas d'en estimer la proportion séparément.]. La durée moyenne de perception est mécaniquement un peu plus longue : selon les remontées individuelles de la DREES de 2011, elle est de 3,5 années (environ 3 années pour les hommes et 4 pour les femmes) [Boneschi et Zakri, 2018].
+
+L'espérance de vie dans l'APA à 60 ans est plus longue dans un état de dépendance modérée, caractérisée par un GIR 3 ou 4 (`r tab1[5,2]` année, soit `r tab1[5,5]` % de l'espérance de vie totale) que dans un état de dépendance sévère, c'est-à-dire en GIR 1 ou 2 (`r tab1[2,2]` année, soit `r tab1[2,5]` %). Elle est également plus élevée en tant que bénéficiaire de l'APA à domicile (`r tab1[1,3]` année, soit `r tab1[1,6]` % de l'espérance de vie à 60 ans) qu'en tant que bénéficiaire de l'APA en établissement pour personnes âgées (`r tab1[1,4]` année, soit `r tab1[1,7]` %).
+
+L'espérance de vie dans l'APA est par ailleurs plus longue pour les femmes que pour les hommes : `r tab1[8,2]` années pour les premières, soit `r tab1[8,5]` % de leur espérance de vie totale à 60 ans, contre `r tab1[9,2]` année (soit `r tab1[9,5]` %) pour les seconds. Les femmes ont en effet une longévité plus grande, notamment aux âges élevés ; elles ont donc une espérance de vie plus élevée, mais aussi une probabilité plus importante de recourir à l’APA avant leur décès.
+
+Calculée pour les personnes qui sont encore en vie à `r agealter` ans, l'espérance de vie dans l'APA est de `r (tab_evapa_agealter %>% filter(cat=="Ensemble"))$DLEx` ans, soit environ un quart (`r (tab_evapa_agealter %>% filter(cat=="Ensemble"))$pctDLEx` %) des `r (tab_evapa_agealter %>% filter(cat=="Ensemble"))$ex` années d'espérance de vie à cet âge. Elle se décompose en `r (tab_evapa_agealter %>% filter(cat=="domicile"))$DLEx` année d'APA à domicile et `r (tab_evapa_agealter %>% filter(cat=="établissement"))$DLEx` année d'APA en établissement, et en `r (tab_evapa_agealter %>% filter(cat=="GIR34"))$DLEx` année en GIR 3 et 4 et `r (tab_evapa_agealter %>% filter(cat=="GIR12"))$DLEx` année en GIR 1 ou 2. L'espérance de vie dans l'APA est plus élevée à 80 ans qu'à 60 ans. Cet écart est lié au fait que les personnes encore en vie à 80 ans ont une probabilité plus grande de devenir dépendantes et de bénéficier de l'APA avant leur décès, tandis que les personnes qui décèdent avant cet âge ont une probabilité plus forte de décéder avant de devenir dépendantes, et donc d'avoir une durée dans l'APA égale à 0.
+
+```{r tab1}
+#kable(tab1) %>% kable_styling("hover","condensed")
+tab1 %>%
+  flextable() %>%
+  theme_vanilla() %>%
+  add_footer_lines(texte_notes(tab1_meta)) %>%
+  set_caption(caption = tab1_meta$titre)
+```
+
+**L'espérance de vie dans l'APA baisse de `r abs(dim1O19_evapa)` % entre 2010 et 2019**
+
+L'espérance de vie dans l'APA a augmenté depuis 2002 -- année de création de cette prestation -- jusqu’à 2010, sous l'effet notamment de la montée en charge de la prestation. Depuis, elle diminue régulièrement, malgré les gains d'espérance de vie au cours de la période. L'espérance de vie dans l'APA décroît ainsi de `r abs(dim1O19_evapa)` % entre 2010 et 2019 (Graphique 2), soit de `r abs(dim1O19_evapa_mois)` mois. Dans le même temps, l'espérance de vie totale à 60 ans augmente de `r var1O19_ev` % (soit + `r aug1O19_ev_mois` mois), ce qui fait que la part de la durée de vie après 60 ans passée dans l'APA baisse davantage encore, de `r dim1019_partevapa` %, passant de `r partapa2010` % fin 2010 à `r partapa2019` % fin 2019.
+
+L'espérance de vie à 60 ans dans l'APA diminue plus dans les catégories de GIR 1 et 2 (`r fdim1019evapa(g="GIR 1 et 2")` %) que dans les GIR 3 et 4 (`r fdim1019evapa(g="GIR 3 et 4")` %). La baisse est particulièrement marquée dans la catégorie de GIR correspondant à la dépendance la plus sévère : `r dimgir1` % en GIR 1. L'espérance de vie dans l'APA décroît à domicile mais elle est stable en établissement (`r fdim1019evapa(l="domicile")` % contre `r fdim1019evapa(l="établissement")` %). Cette stabilité résulte d'une baisse de `r fdim1019evapa(g="GIR 1 et 2",l="établissement")` % pour les GIR 1 et 2, compensée par une hausse de `r fdim1019evapa(g="GIR 3 et 4",l="établissement")` % pour les GIR 3 et 4.
+
+```{r graph2}
+#graphlocly(
+#  graphloc(graph1,aes(y=evol_part_ev,x=annee,colour=gir)) +
+#    geom_line() +
+#    facet_grid(~ lieu ) +
+#    labs(title = "évolution de la part de l'EV à 60 ans passée dans l'APA, depuis 2010")
+#)
+
+#graphlocly(
+  graphlocER(graph2,aes(x=annee)) +
+    facet_grid(~ lieu ) +
+    geom_line(aes(y=evol,colour=gir)) +
+    geom_text(data = graph2 %>% filter(annee == max(graph2$annee)),
+              aes(y=evol,label=paste(evol,"%")), 
+              nudge_x = 0.2, hjust="left",vjust="center",check_overlap = TRUE) +
+    xlim(2010,2021) +
+    labs(title = graph2_meta$titre,
+         x = "Année",
+         y = "évolution depuis 2010 (en %)",
+         caption = texte_notes(graph2_meta))
+#)
+
+#graphlocly(
+#  graphlocER(graph2,aes(x=annee)) +
+#    facet_grid(~ lieu ) +
+#    geom_line(aes(y=evol_dle,colour=gir)) +
+#    geom_line(aes(y=evol_ev),colour="black") +
+#    geom_text(data = graph2 %>% filter(annee == max(graph2$annee)),
+#              aes(y=evol_dle,label=paste(evol_dle,"%")), 
+#              nudge_x = 0.2, hjust="left",vjust="center",check_overlap = TRUE) +
+#    geom_text(data = graph2 %>% filter(annee == max(graph2$annee)),
+#              aes(y=evol_ev,label=paste(evol_ev,"%")),  
+#              nudge_x = 0.2, hjust="left",vjust="center",check_overlap = TRUE) +
+#    xlim(2010,2021) +
+#    labs(title = "évolution de l'EV et de EV dans l'APA à 60 ans, depuis 2010",
+#         x = "Année",
+#         y = "évolution depuis 2010 (en %)")
+#)
+```
+
+**Deux effets contraires influent sur l'évolution de l'espérance de vie dans l'APA**
+
+La diminution de `r abs(dim1O19_evapa_mois)` mois de l'espérance de vie dans l'APA entre 2010 et 2019 est la résultante de deux évolutions contraires. D'un côté, la baisse progressive de la mortalité contribue à augmenter cette espérance de vie de `r effet_ev` mois. Cette baisse a en effet lieu principalement aux grands âges ; les années de vie gagnées le sont donc à des âges où les personnes ont une probabilité plus élevée d'être allocataires de l'APA, ce qui contribue mécaniquement à allonger la durée moyenne passée en tant que bénéficiaire de cette prestation. D'un autre côté, l'amélioration de l'autonomie à âge donné, qui se traduit par une diminution progressive des prévalences de l'APA, contribue à réduire l'espérance de vie dans l'APA de `r abs(effet_preval)` mois (tableau complémentaire D).
+
+Ces effets ne jouent en outre pas de la même façon d'une classe d'âge à l'autre, puisque la baisse de la mortalité et la diminution des prévalences de l'APA ne sont elles mêmes pas homogènes selon l'âge. La première joue surtout après 85 ans, tandis que la seconde est la plus marquée autour de 80 ans. La diminution de l'espérance de vie passée dans l'APA de `r abs(dim1O19_evapa_mois)` mois entre 2010 et 2019 se décompose ainsi en des baisses de `r (decomp_cum %>% filter(trAge=="[60,75)"))$d_DLEx %>% abs() %>% round(1)` mois et `r (decomp_cum %>% filter(trAge=="[75,85)"))$d_DLEx %>% abs() %>% round(1)` mois de la durée passée dans l'APA respectivement avant 75 ans et entre 75 et 84 ans, et une hausse de `r (decomp_cum %>% filter(trAge=="[85,Inf]"))$d_DLEx %>% abs() %>% round(1)` mois de la durée après 85 ans.  
+
+**Une hausse future du nombre de bénéficiaires potentiellement moindre qu’attendue ?**
+
+Les politiques de l'autonomie au grand âge en France s'appuient généralement sur des projections d'évolution du nombre de personnes âgées dépendantes, afin d'anticiper par exemple les nombres de bénéficiaires de l'APA et donc les besoins de financement à venir. De telles projections sont réalisées notamment grâce au modèle LIVIA de la DREES^[Le modèle LIVIA permet entre autres de projeter les nombres de bénéficiaires de l'APA, mais sont résultat principal porte sur les personnes âgées dépendantes selon une définition plus large.] (Miron de l’Espinay et Roy, 2020). Elles formulent habituellement trois hypothèses pour l'évolution des incapacités des seniors à l'avenir. Aux deux extrêmes, une hypothèse pessimiste suppose que tous les gains d'espérance de vie après 60 ans seront passés en incapacité (l'espérance de vie sans incapacité restant donc constante), tandis qu'une hypothèse optimiste suppose à l'inverse que tous les gains sont passés sans incapacité (c'est alors l'espérance de vie en incapacité qui reste inchangée, égale à sa valeur d'aujourd'hui). Ene hypothèse intermédiaire, généralement considérée comme scénario « central » suppose que les gains d'espérance de vie se répartiront entre vie sans et en incapacité, au *prorata* des proportions observées aujourd'hui.
+
+L'évolution observée entre 2010 et 2019 pour l'espérance de vie dans l'APA est cependant celle d'une *diminution* de la durée de vie dans l'APA^[Cette diminution est cohérente avec l'évolution de l'espérance de vie sans incapacité (EVSI) à 65 ans, publiée chaque année par la DREES (Deroyon, 2020). En effet, l'EVSI des femmes, par exemple, augmente  de 1,8 an entre 2010 et 2019, soit davantage que l'espérance de vie totale (+0,8 an), ce qui signifie que l'espérance de vie en incapacité a baissé de 1 an sur la période. Pour les hommes, cette dernière a baissé de 0,5 an.], malgré les gains d'espérance de vie des seniors au cours de la période. Cette tendance s'avère donc encore plus favorable que l'hypothèse qualifiée d'optimiste dans les projections du modèle LIVIA. Même s'il faut rester prudent à ce stade -- le recul temporel sur la baisse de l'espérance de vie dans l'APA étant encore insuffisant -- le nombre anticipé de bénéficiaires de l'APA pourrait, si ce mouvement se confirmait et se prolongeait à l'avenir, s'avérer finalement plus faible que dans les projections actuelles. Ainsi, ce nombre de bénéficiaires augmenterait par exemple de `r deltanbapa2030("livia_intermediaire")` personnes entre `r anrefproj` et 2030 d'après le scénario central du modèle LIVIA^[Pour ce qui concerne la mortalité, on retient ici le scénario dit « d'espérance de vie basse » dans les dernières projections démographiques de l'Insee. C'est en fait le scénario qui s'approche le plus de l'évolution de l'espérance de vie observée au cours des dernières années.], et de `r deltanbapa2030("livia_optimiste")` personnes d'après le scénario optimiste. Si la tendance observée entre 2010 et 2019 pour les prévalences de l'APA à chaque âge se poursuivait, l'augmentation pourrait n'être au final que de  `r deltanbapa2030("trend1019")` personnes.
+ 
+*** 
+ 
+## Encadré : Sources et méthode
+
+**L'indicateur étudié : l'espérance de vie dans l'APA à 60 ans**
+
+L'allocation personnalisée d'autonomie (APA) est une prestation d'aide sociale gérée par les départements et destinée à financer les aides pour l'autonomie des personnes âgées, que ce soit en établissement ou à domicile. L'espérance de vie dans l'APA à 60 ans désigne la durée moyenne pendant laquelle une personne de 60 ans peut espérer bénéficier de l'APA, compte tenu des conditions de mortalité et des probabilités de bénéficier de l'APA à chaque âge observées pendant l'année considérée. Cette espérance de vie dans l'APA (ou « EVAPA ») est par construction plus courte que la durée moyenne de perception de l'APA des bénéficiaires de cette prestation, car elle tient également compte des personnes qui décèdent sans en avoir bénéficié (et qui comptent donc pour une durée nulle dans le calcul). Elle peut être ventilée selon le lieu où résident les personnes âgées (à domicile ou en établissement) ou selon le niveau de dépendance (mesurée par le groupe iso-ressources, ou GIR). Elle appartient à la famille des indicateurs d'espérance de vie avec ou sans incapacité (EVSI), l'incapacité étant ici mesurée par le fait d'être allocataire de l'APA. 
+
+L'espérance de vie dans l'APA a pour principal intérêt de s'affranchir des effets de structure démographique, à l'inverse d'autres indicateurs comme le nombre ou la part de bénéficiaires de l'APA, qui augmentent mécaniquement chaque année du fait du vieillissement démographique. Elle permet ainsi de porter un diagnostic sur l'évolution des incapacités des personnes âgées au fil du temps, indépendamment du fait que ces personnes sont de plus en plus nombreuses d'année en année avec l'avancée en âge des générations du *baby-boom*. Elle permet donc, entre autres, de savoir si les gains d'espérance de vie des seniors sont ou non passés avec un besoin d'aides à l'autonomie. 
+
+La principale limite de l'indicateur est celle de toute mesure administrative : le bénéfice de l'APA dépend des besoins d'aide des personnes âgées, mais aussi de leurs comportements de recours à ces aides et des pratiques d'attribution par les départements. Une baisse de l'espérance de vie dans l'APA peut donc traduire une diminution des incapacités, mais elle peut aussi avoir lieu, par exemple, en cas de hausse du non-recours à la prestation. En revanche, l'espérance de vie dans l'APA présente l'intérêt d'être calculée à partir de données exhaustives fournies par les conseils départementaux ; ses évolutions sont donc moins « bruitées » que celles des espérances de vie sans incapacité, calculées sur la base d'enquêtes sur des échantillons, et se prêtent donc mieux à un suivi d'une année sur l'autre.
+
+**Sources et méthode de calcul**
+
+L'espérance de vie dans l'APA est, comme toute espérance de vie avec ou sans incapacité, calculée en utilisant la méthode de Sullivan, qui combine des informations sur les probabilités de survie et sur les probabilités de bénéficier de l'APA, à chaque âge à partir d'un âge de départ donné (ici 60 ans). Pour ce faire, les données démographiques (quotients de mortalité et populations par tranche d'âge) sont issues des bilans démographiques de l'Insee, et les données sur l'APA (effectifs totaux de bénéficiaires et ventilation de ces effectifs par tranche d'âge) tirées de l'enquête annuelle de la DREES sur l'aide sociale départementale. Les données sont recalées pour que les totaux tous  ansconfondus soient bien cohérents avec le détail par GIR. Le calcul des espérances de vie dans l'APA utilise ensuite le paquet *healthexpectancies* avec le logiciel statistique R.
+
+Dans l'enquête *Aide sociale* de la DREES, les ventilations par âge sont disponibles par tranches d'âge quinquennal jusqu'à 85 ans entre 2002 et 2015 (la dernière tranche regroupant l'ensemble des personnes de 85 ans ou plus), puis jusqu'à 95 ans à partir de 2016. Les prévalences (c'est-à-dire les parts de bénéficiaires de l'APA selon l'âge) ne peuvent donc être calculées qu'en moyenne au sein de chaque tranche d'âge. Pour le calcul de l'EVAPA, elles sont d'abord extrapolées par âge fin, en minimisant la sommes des carrés des différences secondes des prévalences (pour tenir compte du profil parabolique en fonction de l'âge de ces prévalences), sous contrainte que la moyenne par tranche d'âge soit bien égale à la valeur observée. Cette extrapolation donne des valeurs légèrement différentes selon que la tranche d'âge la plus élevée regroupe les plus de 85 ans (données observées jusqu'en 2015) ou les plus de 95 ans (données observées à partir de 2016). La différence est toutefois minime : elle est par exemple de 0,05 année d'espérance de vie dans l'APA en 2016. Pour éviter une rupture de série dans les illustrations qui présentent les évolutions depuis 2010, on retient un découpage par tranche d'âge similaire pour toutes les années. Par ailleurs, la ventilation par tranche d’âge des bénéficiaires de l’APA en établissement n’est généralement renseignée dans l’enquête *Aide sociale* que pour ceux qui ne résident pas en établissement sous dotation globale. On fait donc l’hypothèse que la répartition par âge sur ce sous-champ d’établissements est représentative de celle pour l’ensemble des bénéficiaires de l’APA en établissement.
+ 
+*** 
+
+## Pour en savoir plus
+
+Les données sur l’APA sont disponibles sur le site internet de la DREES.  https://drees.solidarites-sante.gouv.fr/etudes-et-statistiques/open-data/handicap-et-dependance/le-handicap-et-la-dependance/article/donnees-concernant-l-allocation-personnalisee-d-autonomie-apa
+
+L’enquête Aide sociale est présentée sur le site internet de la DREES, avec des liens vers les ta-bleaux de résultats téléchargeables tirés de cette enquête.  https://drees.solidarites-sante.gouv.fr/sources-outils-et-enquetes/lenquete-aide-sociale-aupres-des-conseils-departementaux. Cette page de présentation fournit les liens vers les tableaux de résultats téléchargeables tirés de cette enquête.
+
+Les espérances de vie dans l'APA sont calculées selon la méthode de Sullivan, présentée sur le site de l'Ined : https://reves.site.ined.fr/fr/resources/calcul_en_ligne/sullivan/.
+
+Boneschi S. et M. Zakri (2018, octobre), « La durée de perception de l’allocation personnalisée d’autonomie est de 3 ans et demi en moyenne », *Études et résultats* N° 1082
+https://drees.solidarites-sante.gouv.fr/publications/etudes-et-resultats/la-duree-de-perception-de-lallocation-personnalisee-dautonomie-est
+
+Deroyon T. (2020, décembre), « En 2019, l’espérance de vie sans incapacité à 65 ans est de 11,5 ans pour les femmes et de 10,4 ans pour les hommes », *Études et résultats* N° 1173.
+https://drees.solidarites-sante.gouv.fr/publications/etudes-et-resultats/en-2019-lesperance-de-vie-sans-incapacite-65-ans-est-de-115-ans
+
+Leroux,  I. (dir.) (2020). *L’aide et l’action sociales en France – Perte d’autonomie, handicap, protection de l’enfance et insertion*. Paris, France : DREES, coll. Panoramas de la DREES-social.
+https://drees.solidarites-sante.gouv.fr/publications-documents-de-reference/panoramas-de-la-drees/laide-et-laction-sociales-en-france-perte
+
+Miron de l’Espinay A. et D. Roy (2020, décembre). « Perte d’autonomie : à pratiques inchangées, 108 000 seniors de plus seraient attendus en Ehpad d’ici à 2030. Projections de population âgée en perte d’autonomie selon le modèle Lieux de vie et autonomie (LIVIA) », *Études et résultats* N° 1172.
+https://drees.solidarites-sante.gouv.fr/publications/etudes-et-resultats/perte-dautonomie-pratiques-inchangees-108-000-seniors-de-plus
+
+
